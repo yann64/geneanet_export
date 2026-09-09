@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exportgeneanet"
+version = "0.1.0"
+description = "Export a public Geneanet tree to GEDCOM, respecting Geneanet's usage rules."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+    "protobuf>=5.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "grpcio-tools>=1.60",
+]
+
+[project.scripts]
+exportgeneanet = "exportgeneanet.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Runtime state, not source
+*.ged
+.exportgeneanet/
+crawl-state*.json
+*.html
+!tests/fixtures/*.html

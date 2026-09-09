@@ -1,0 +1,154 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A Python CLI that exports a public [Geneanet](https://www.geneanet.org/) tree
+to a GEDCOM 5.5.1 file — either the whole tree or just the ascendants of one
+selected individual. CLI-only today; PySide6 (Qt6) is the intended toolkit for
+a possible future GUI, but is not a current dependency.
+
+Test accounts for manual verification: `yann64` (primary), `jpmanzinali`,
+`jloger`.
+
+## Commands
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
+pytest                            # full test suite (no network)
+pytest tests/test_mapping.py::test_individual_from_person_maps_events_and_relations  # single test
+
+exportgeneanet list --username yann64 --individual "etienne.barbel.0"
+exportgeneanet export --username yann64 --scope all --individual "etienne.barbel.0" -o yann64.ged
+exportgeneanet export --username yann64 --scope ascendants --individual "etienne.barbel.0" -o out.ged
+
+python scripts/generate_proto.py   # regenerate src/exportgeneanet/proto/, only if Geneanet's API schema changes
+```
+
+There is no lint/format tooling configured yet.
+
+## Critical constraint: how data is fetched
+
+`gw.geneanet.org`'s HTML pages sit behind a Cloudflare "managed challenge"
+that reliably blocks automated access — confirmed during this project's
+development that even a real, human-operated browser couldn't get
+consistently past it (headless is blocked outright, even with a valid
+session cookie). **Do not build any code path that scrapes rendered HTML
+from `gw.geneanet.org` pages, and never add stealth/fingerprint-spoofing to
+try to defeat that protection** — that's detection-evasion territory, not
+something this project does.
+
+Instead, everything goes through Geneanet's own internal protobuf API at
+`https://gw.geneanet.org/setup/api/` — the same API Geneanet's own frontend
+calls via XHR after a page's shell loads. That subpath has no such
+protection: plain `requests` calls reach it immediately, no cookies or
+browser needed. This was discovered via
+[jmichault/gramps-kromprogramoj](https://github.com/jmichault/gramps-kromprogramoj)
+(GPL-3.0), a real, actively-maintained Gramps addon (`fontoj/PersonGN/geneanet.py`)
+that talks to Geneanet the same way — `api_client.py` is modeled on its `Api`
+class, including the response-decoding quirk (protobuf bytes need
+`.decode("utf-8").encode("raw_unicode_escape")` before `ParseFromString` in
+some cases).
+
+Two things worth remembering when touching this code:
+
+- **This is an unofficial, internal API**, not a documented public one. It
+  could change or be restricted without notice — if `api_client.py` calls
+  start failing, that's the first thing to suspect (compare live responses
+  against the `.proto` schemas in `src/exportgeneanet/proto/`, or
+  re-fetch/re-diff them with `scripts/generate_proto.py`).
+- **This tool never authenticates.** No login flow exists and none should be
+  added — every call must be anonymous, matching what a visitor's browser
+  would see. See "Privacy enforcement" below.
+
+## Privacy enforcement
+
+Every person reference the API returns carries `name_is_hidden` /
+`name_is_restricted` / `visible_for_visitors` flags — the same signal
+Geneanet's own frontend uses to decide whether to render a name (e.g. the
+"Cette personne est masquée" placeholder on the HTML site). `mapping.py`'s
+`is_publicly_visible()` is the single place that checks these flags, and
+every function that turns an API response into a `PersonKey`/`Individual`
+routes through it (`person_key_from_summary`/`person_ref_from_summary` are
+the *unchecked* raw extractors — only call them after an
+`is_publicly_visible()` check, as the existing code does). Never bypass this
+check to "get more data" — it's the ethical core of the project (see
+README's "Respecting Geneanet's usage").
+
+## Architecture
+
+Everything lives in `src/exportgeneanet/`:
+
+- **`proto/`** — generated Python protobuf bindings for Geneanet's own
+  `.proto` schemas (`api`, `api_app`, `api_stats`, `api_saisie_read`,
+  `api_saisie_write`), committed to the repo (like the reference addon does)
+  so normal installs never need a protobuf compiler. Regenerate with
+  `scripts/generate_proto.py`, which uses `grpc_tools.protoc` (pip-installable,
+  no system `protoc`/sudo needed).
+- **`identifiers.py`** — `PersonKey(p, n, oc)`: given name, surname, GeneWeb
+  occurrence number disambiguating same-name people. Stringifies as
+  `given.surname.oc`, the CLI's `--individual` format. The stable,
+  human-meaningful identifier used everywhere outside the API layer.
+- **`api_client.py`** — `GeneanetApiClient`: anonymous, rate-limited HTTP
+  client for `/setup/api/`. `search_persons` (name search, results embed
+  father/mother/spouses), `get_graph` (ascendants/descendants graph —
+  `nb_asc`/`nb_desc` generations *in one call*), `get_person` (full detail:
+  events, notes, sources, families — needed per-person since graph nodes are
+  lightweight summaries only). Every call goes through `rate_limiter.py`
+  first; never add concurrency here.
+- **`rate_limiter.py`** — sleeps a random `[min_delay, max_delay]` duration
+  before every single request. Hard requirement, not a tunable nicety.
+- **`mapping.py`** — translates protobuf API responses (as plain dicts via
+  `google.protobuf.json_format.MessageToDict(..., preserving_proto_field_name=True)`)
+  into `models.py` dataclasses. Holds the `EVENT_TAG_MAP` (Geneanet's
+  `EPERS_*`/`EFAM_*` event-name enum → GEDCOM tag, adapted from the
+  reference addon's `gn_constants.py`, which maps the same enum to Gramps'
+  `EventType` instead) and the privacy check described above. `_text()`/
+  `_html_to_text()` unescape HTML entities that show up even in plain
+  fields like place names (e.g. `"Prud&#39;Homie"`) — apply one of these to
+  any new string field pulled from an API response.
+- **`models.py`** — plain dataclasses mirroring GEDCOM concepts (`Individual`,
+  `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic. Keeps
+  `gedcom_writer.py` a thin serializer instead of a second place that
+  understands genealogy or the API shape.
+- **`tree_crawler.py`** — the two crawl strategies behind `--scope`:
+  - `crawl_ascendants`: one `get_graph(nb_asc=N)` call discovers every
+    ancestor's index in a lineage at once, then one `get_person` call per
+    discovered ancestor for full detail. Family records are synthesized from
+    each person's own `father`/`mother` fields — deliberately ignores their
+    own spouse/children (`individual_from_person`'s `families` return value),
+    keeping an ascendants export to exactly the lineage.
+  - `crawl_full`: BFS over the whole family graph (parents, spouses,
+    children) via the `related` set every `get_person` call returns,
+    starting from one seed `PersonKey`. There is no confirmed "list every
+    individual" API action (several candidate action names were tried and
+    silently no-opped — Geneanet's API doesn't 404 on unknown actions, it
+    just returns an empty body, making trial-and-error unreliable), so a
+    seed is required; a tree is a single connected component in practice.
+  - Both checkpoint `CrawlState` (visited set, pending `(PersonKey, index)`
+    queue, collected individuals/families) to JSON after every individual,
+    resumable with `--resume`.
+- **`gedcom_writer.py`** — pure function `generate_gedcom(individuals, families, ...)
+  -> str`. Computes `FAMC` (family-as-child) by inverting `Family.children`
+  lists, since `Individual` only stores `father`/`mother` keys directly.
+- **`cli.py`** — Typer app wiring `list` / `export`. `--individual` is
+  required for both (no default-person fallback exists over the API).
+
+### Data flow for `export`
+
+`cli.export` → `tree_crawler.crawl_full` or `crawl_ascendants` (driving
+`GeneanetApiClient` + `RateLimiter` + `mapping.individual_from_person`) →
+accumulates a `CrawlState` →
+`gedcom_writer.write_gedcom_file(state.individuals, state.families, ...)`.
+
+## Testing against real data
+
+Unlike the project's original HTML-scraping approach, this sandbox *can*
+reach `gw.geneanet.org/setup/api/` directly (confirmed: plain `curl`/
+`requests`, no Cloudflare challenge) — real end-to-end verification against
+`yann64` is possible directly in a session, no need to hand off to the user.
+`tests/` fixtures use hand-built dicts shaped like real `MessageToDict`
+output rather than saved HTML, since the API shape is stable and typed.
