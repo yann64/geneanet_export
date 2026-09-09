@@ -58,6 +58,78 @@ EVENT_TAG_MAP = {
 }
 
 
+# GeneWeb's raw date encoding, e.g. "?/1946/0/0#" (possibly 1946),
+# "~/1668/0/0#" (about 1668), "</1891/0/0#" (before 1891),
+# ">/1823/0/0#" (after 1823), "/1882/1/23#" (23 Jan 1882, sure). The
+# trailing "#" is a fixed terminator (present regardless of calendar, not a
+# Gregorian marker) — the actual calendar comes from the separate `date_cal`
+# field. Confirmed against ~180 real date_raw values from yann64's tree.
+_DATE_PART_RE = re.compile(r"^(?P<prefix>[?~<>]?)/?(?P<year>-?\d+)/(?P<month>\d+)/(?P<day>\d+)#?$")
+
+# GeneWeb precision prefix -> closest GEDCOM 5.5.1 date qualifier. "?"
+# (Geneanet's "possibly") maps to EST (estimated) rather than a made-up
+# "maybe" qualifier GEDCOM doesn't have.
+_PRECISION_TO_QUALIFIER = {"?": "EST", "~": "ABT", "<": "BEF", ">": "AFT"}
+
+_MONTH_ABBR = [
+    None, "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+]
+
+# GEDCOM calendar escapes for calendars where date_raw's Y/M/D numbers are
+# straightforward (Gregorian needs no escape; Julian uses the same D/M/Y
+# numbering). FRENCH/HEBREW raw values were NOT confirmed to use plain D/M/Y
+# numbering (a real French-Republican example's numbers didn't match its own
+# displayed date) — rather than risk silently emitting a wrong date, those
+# fall back to Geneanet's localized display text instead of being parsed.
+_CALENDAR_ESCAPE = {"JULIAN": "@#DJULIAN@"}
+_PARSEABLE_RAW_CALENDARS = {"GREGORIAN", "JULIAN", None}
+
+
+def _format_dmy(year: str, month: int, day: int) -> str:
+    parts = []
+    if month and day:
+        parts.append(str(day))
+    if month:
+        parts.append(_MONTH_ABBR[month])
+    parts.append(year)
+    return " ".join(parts)
+
+
+def _parse_date_part(raw: str) -> str | None:
+    m = _DATE_PART_RE.match(raw)
+    if not m:
+        return None
+    dmy = _format_dmy(m["year"], int(m["month"]), int(m["day"]))
+    qualifier = _PRECISION_TO_QUALIFIER.get(m["prefix"])
+    return f"{qualifier} {dmy}" if qualifier else dmy
+
+
+def gedcom_date(raw: str | None, calendar: str | None, fallback_text: str | None) -> str | None:
+    """Convert a GeneWeb `*_date_raw` value into a GEDCOM 5.5.1 DATE value
+    (`DD MON YYYY`, with ABT/EST/BEF/AFT/BET...AND qualifiers as needed).
+    Falls back to Geneanet's own localized display text — not GEDCOM-valid,
+    but better than losing the information — when `raw` is absent or in a
+    form this parser doesn't recognize (e.g. an unparsed calendar, or the
+    rare non-D/M/Y interval encodings GeneWeb occasionally emits)."""
+    if not raw or calendar not in _PARSEABLE_RAW_CALENDARS:
+        return _text(fallback_text)
+
+    if "#.." in raw:
+        left_raw, right_raw = raw.split("#..", 1)
+        left = _parse_date_part(left_raw)
+        right = _parse_date_part(right_raw)
+        if left and right:
+            return f"BET {left} AND {right}"
+        return _text(fallback_text)
+
+    date_str = _parse_date_part(raw)
+    if date_str is None:
+        return _text(fallback_text)
+    escape = _CALENDAR_ESCAPE.get(calendar or "GREGORIAN")
+    return f"{escape} {date_str}" if escape else date_str
+
+
 def _html_to_text(text: str) -> str:
     """Geneanet notes are simple HTML (`<p>`, `<br>`, entities); flatten to
     plain text for a GEDCOM NOTE rather than pulling in an HTML parser
@@ -125,7 +197,7 @@ def individual_from_person(
         individual.events.append(
             Event(
                 tag=EVENT_TAG_MAP.get(event_type, "EVEN"),
-                date=_text(element.get("date")),
+                date=gedcom_date(element.get("date_raw"), element.get("date_cal"), element.get("date")),
                 place=_place(element.get("place")),
                 note=Note(_html_to_text(element["note"])) if element.get("note") else None,
             )
@@ -170,7 +242,9 @@ def individual_from_person(
         if fam.get("marriage_date") or fam.get("marriage_place"):
             marriage = Event(
                 tag="MARR",
-                date=_text(fam.get("marriage_date")),
+                date=gedcom_date(
+                    fam.get("marriage_date_raw"), fam.get("marriage_date_cal"), fam.get("marriage_date")
+                ),
                 place=_place(fam.get("marriage_place")),
             )
 

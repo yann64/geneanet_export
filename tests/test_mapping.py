@@ -1,5 +1,6 @@
 from exportgeneanet.identifiers import PersonKey
 from exportgeneanet.mapping import (
+    gedcom_date,
     individual_from_person,
     is_publicly_visible,
     person_ref_from_graph_node,
@@ -123,3 +124,58 @@ def test_individual_from_person_excludes_hidden_parent():
     individual, _families, related = individual_from_person(person)
     assert individual.father is None
     assert related == set()
+
+
+def test_gedcom_date_sure_full_date():
+    assert gedcom_date("/1882/1/23#", "GREGORIAN", "Jan. 23, 1882") == "23 JAN 1882"
+
+
+def test_gedcom_date_year_only():
+    assert gedcom_date("/1906/0/0#", "GREGORIAN", "1906") == "1906"
+
+
+def test_gedcom_date_month_and_year_only():
+    assert gedcom_date("?/1687/1/0#", "GREGORIAN", "possibly Jan., 1687") == "EST JAN 1687"
+
+
+def test_gedcom_date_maybe_maps_to_est():
+    # This is the bug report: "peut-être 1946" must not leak into GEDCOM;
+    # GeneWeb's "?" precision maps to GEDCOM's EST qualifier.
+    assert gedcom_date("?/1946/0/0#", "GREGORIAN", "peut-être 1946") == "EST 1946"
+
+
+def test_gedcom_date_about():
+    assert gedcom_date("~/1668/0/0#", "GREGORIAN", "about 1668") == "ABT 1668"
+
+
+def test_gedcom_date_before():
+    assert gedcom_date("</1891/0/0#", "GREGORIAN", "before 1891") == "BEF 1891"
+
+
+def test_gedcom_date_after():
+    assert gedcom_date(">/1823/0/0#", "GREGORIAN", "after 1823") == "AFT 1823"
+
+
+def test_gedcom_date_between_range():
+    assert (
+        gedcom_date("/1652/0/0#../1654/0/0", "GREGORIAN", "between 1652 and 1654")
+        == "BET 1652 AND 1654"
+    )
+
+
+def test_gedcom_date_julian_uses_calendar_escape():
+    assert gedcom_date("/1700/3/1#", "JULIAN", "1 Mar 1700") == "@#DJULIAN@ 1 MAR 1700"
+
+
+def test_gedcom_date_unparseable_calendar_falls_back_to_text():
+    # French Republican raw numbers don't reliably map to plain D/M/Y —
+    # deliberately not parsed; the localized text is used as-is instead.
+    assert gedcom_date("?/1805/1/13#", "FRENCH", "23 Nivose year XIII") == "23 Nivose year XIII"
+
+
+def test_gedcom_date_missing_raw_falls_back_to_text():
+    assert gedcom_date(None, None, "some free text") == "some free text"
+
+
+def test_gedcom_date_unrecognized_raw_falls_back_to_text():
+    assert gedcom_date("BEF 1905 AFT 1907", None, "(BEF 1905 AFT 1907)") == "(BEF 1905 AFT 1907)"
