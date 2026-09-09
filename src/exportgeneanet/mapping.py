@@ -194,12 +194,16 @@ def individual_from_person(
         event_type = element.get("type")
         if event_type is None or event_type.startswith("EFAM_"):
             continue  # family events are attached to the Family record instead
+        gedcom_tag = EVENT_TAG_MAP.get(event_type, "EVEN")
         individual.events.append(
             Event(
-                tag=EVENT_TAG_MAP.get(event_type, "EVEN"),
+                tag=gedcom_tag,
                 date=gedcom_date(element.get("date_raw"), element.get("date_cal"), element.get("date")),
                 place=_place(element.get("place")),
                 note=Note(_html_to_text(element["note"])) if element.get("note") else None,
+                # Only the generic fallback tag needs a TYPE to say what it
+                # actually is; BIRT/DEAT/etc already say that via the tag.
+                type=_text(element.get("name")) if gedcom_tag == "EVEN" else None,
             )
         )
 

@@ -66,3 +66,17 @@ def test_generate_gedcom_excludes_notes_when_disabled():
     individuals, families = _sample_data()
     gedcom = generate_gedcom(individuals, families, include_notes=False)
     assert "A note about Jean." not in gedcom
+
+
+def test_generate_gedcom_generic_event_includes_type():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        events=[Event(tag="EVEN", date="1946", type="Correspondance")],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+    even_idx = lines.index("1 EVEN")
+    assert lines[even_idx + 1] == "2 TYPE Correspondance"

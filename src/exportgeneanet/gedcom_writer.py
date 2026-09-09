@@ -43,6 +43,8 @@ class GedcomLines:
 
 def _write_event(g: GedcomLines, level: int, event: Event) -> None:
     g.add(level, event.tag)
+    if event.type:
+        g.add(level + 1, "TYPE", event.type)
     if event.date:
         g.add(level + 1, "DATE", event.date)
     if event.place:

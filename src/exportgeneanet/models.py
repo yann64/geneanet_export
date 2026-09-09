@@ -38,9 +38,13 @@ class Event:
     """A GEDCOM-style event: tag is e.g. "BIRT", "DEAT", "MARR", "OCCU"."""
 
     tag: str
-    date: str | None = None  # kept as raw text; Geneanet dates are often approximate
+    date: str | None = None
     place: Place | None = None
     note: Note | None = None
+    # Subordinate TYPE value, e.g. Geneanet's own event label ("Correspondance")
+    # for events mapped to the generic GEDCOM "EVEN" tag — GEDCOM expects EVEN
+    # to carry a TYPE describing what kind of event it actually is.
+    type: str | None = None
 
 
 @dataclass

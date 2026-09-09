@@ -179,3 +179,27 @@ def test_gedcom_date_missing_raw_falls_back_to_text():
 
 def test_gedcom_date_unrecognized_raw_falls_back_to_text():
     assert gedcom_date("BEF 1905 AFT 1907", None, "(BEF 1905 AFT 1907)") == "(BEF 1905 AFT 1907)"
+
+
+def test_individual_from_person_sets_type_on_generic_events_only():
+    person = {
+        "index": 1,
+        "sex": "MALE",
+        "lastname": "Dupont",
+        "firstname": "Jean",
+        "n": "dupont",
+        "p": "jean",
+        "occ": 0,
+        "events": {
+            "elements": [
+                {"type": "EPERS_BIRTH", "name": "birth", "date": "1950"},
+                {"type": "EPERS_CUSTOM", "name": "Correspondance", "date": "1946"},
+            ]
+        },
+    }
+    individual, _families, _related = individual_from_person(person)
+    birth, custom = individual.events
+    assert birth.tag == "BIRT"
+    assert birth.type is None
+    assert custom.tag == "EVEN"
+    assert custom.type == "Correspondance"
