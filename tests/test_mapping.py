@@ -203,3 +203,179 @@ def test_individual_from_person_sets_type_on_generic_events_only():
     assert birth.type is None
     assert custom.tag == "EVEN"
     assert custom.type == "Correspondance"
+
+
+def _base_person(**overrides):
+    base = {
+        "index": 1,
+        "sex": "MALE",
+        "lastname": "Dupont",
+        "firstname": "Jean",
+        "n": "dupont",
+        "p": "jean",
+        "occ": 0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_individual_from_person_maps_psources():
+    person = _base_person(psources="Some &#39;archival&#39; reference")
+    individual, _families, _related = individual_from_person(person)
+    assert individual.sources == ["Some 'archival' reference"]
+
+
+def test_individual_from_person_event_source_and_reason():
+    person = _base_person(
+        events={
+            "elements": [
+                {
+                    "type": "EPERS_BIRTH",
+                    "name": "birth",
+                    "date": "1950",
+                    "src": "Registre des naissances, acte 12",
+                    "reason": "Because reasons",
+                }
+            ]
+        }
+    )
+    individual, _families, _related = individual_from_person(person)
+    (birth,) = individual.events
+    assert birth.source == "Registre des naissances, acte 12"
+    assert birth.note.text == "Reason: Because reasons"
+
+
+def test_individual_from_person_event_witnesses_filters_privacy():
+    visible_witness = _simple_person(index=9, p="marie", n="martin")
+    hidden_witness = _simple_person(index=10, p="hidden", n="person", name_is_hidden=True)
+    person = _base_person(
+        events={
+            "elements": [
+                {
+                    "type": "EPERS_BIRTH",
+                    "name": "birth",
+                    "witnesses": [
+                        {"witness_type": "WITNESS_GODPARENT", "witness": visible_witness, "witness_note": "note"},
+                        {"witness_type": "WITNESS", "witness": hidden_witness},
+                    ],
+                }
+            ]
+        }
+    )
+    individual, _families, _related = individual_from_person(person)
+    (birth,) = individual.events
+    assert len(birth.witnesses) == 1
+    witness = birth.witnesses[0]
+    assert witness.person == PersonKey(p="marie", n="martin", oc=0)
+    assert witness.role == "Godparent"
+    assert witness.note == "note"
+
+
+def test_individual_from_person_family_notes_and_sources():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "notes": "Some family note",
+                "fsources": "Family source citation",
+            }
+        ]
+    )
+    individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.notes[0].text == "Some family note"
+    assert fam.sources == ["Family source citation"]
+    assert fam.key in individual.family_keys
+
+
+def test_individual_from_person_marriage_src_attaches_to_marriage_event():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "marriage_date": "1950",
+                "marriage_src": "Marriage register citation",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.marriage.source == "Marriage register citation"
+
+
+def test_individual_from_person_marriage_type_engaged_maps_to_enga():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "marriage_date": "1950",
+                "marriage_type": "ENGAGED",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.marriage.tag == "ENGA"
+    assert fam.marriage.type is None
+
+
+def test_individual_from_person_marriage_type_no_mention_falls_back_to_generic_event():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "marriage_place": "Somewhere",
+                "marriage_type": "NO_MENTION",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.marriage.tag == "EVEN"
+    assert fam.marriage.type == "No mention"
+
+
+def test_individual_from_person_divorce_event_mapped_to_div():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "divorce_type": "DIVORCED",
+                "divorce_date": "1960",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.divorce.tag == "DIV"
+
+
+def test_individual_from_person_no_divorce_event_when_not_divorced():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "divorce_type": "NOT_DIVORCED",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert fam.divorce is None
+
+
+def test_individual_from_person_family_witnesses_on_marriage():
+    witness = _simple_person(index=9, p="paul", n="temoin")
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "marriage_date": "1950",
+                "witnesses": [{"witness_type": "WITNESS_CIVILOFFICER", "witness": witness}],
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person)
+    (fam,) = families
+    assert len(fam.marriage.witnesses) == 1
+    assert fam.marriage.witnesses[0].role == "Civil officer"

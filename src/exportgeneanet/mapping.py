@@ -21,7 +21,7 @@ import html
 import re
 
 from .identifiers import PersonKey
-from .models import Event, Family, Individual, Media, Note, Place
+from .models import Event, Family, Individual, Media, Note, Place, Witness
 
 _SEX_MAP = {"MALE": "M", "FEMALE": "F", "UNKNOWN": "U"}
 
@@ -56,6 +56,43 @@ EVENT_TAG_MAP = {
     "EPERS_EDUCATION": "EDUC",
     "EPERS_ELECTION": "EVEN",
 }
+
+# Geneanet's MarriageType enum -> GEDCOM tag. Only MARRIED-like values map to
+# a specific tag; anything else falls back to a generic EVEN with a TYPE
+# label derived from the enum name (`_label_from_enum`), same philosophy as
+# EVENT_TAG_MAP above. Confirmed against real data that NO_MENTION is common
+# in practice (usually with no date at all, so no event gets emitted then).
+MARRIAGE_TYPE_TAG_MAP = {
+    "MARRIED": "MARR",
+    "NO_SEXES_CHECK_MARRIED": "MARR",
+    "ENGAGED": "ENGA",
+    "MARRIAGE_BANN": "MARB",
+    "MARRIAGE_CONTRACT": "MARC",
+    "MARRIAGE_LICENSE": "MARL",
+    "RESIDENCE": "RESI",
+}
+
+# Geneanet's DivorceType enum -> GEDCOM tag. NOT_DIVORCED means "no divorce
+# event" (handled by the caller, not this map). GEDCOM 5.5.1 has no dedicated
+# "separated" tag, so that falls back to EVEN+TYPE.
+DIVORCE_TYPE_TAG_MAP = {"DIVORCED": "DIV"}
+
+# Geneanet's WitnessType enum -> a human-readable GEDCOM ASSO/RELA role.
+WITNESS_TYPE_LABEL = {
+    "WITNESS": "Witness",
+    "WITNESS_GODPARENT": "Godparent",
+    "WITNESS_CIVILOFFICER": "Civil officer",
+    "WITNESS_RELIGIOUSOFFICER": "Religious officer",
+    "WITNESS_INFORMANT": "Informant",
+    "WITNESS_ATTENDING": "Attending",
+    "WITNESS_MENTIONED": "Mentioned",
+    "WITNESS_OTHER": "Witness",
+}
+
+
+def _label_from_enum(value: str) -> str:
+    """"NO_SEXES_CHECK_NOT_MARRIED" -> "No sexes check not married"."""
+    return value.replace("_", " ").capitalize()
 
 
 # GeneWeb's raw date encoding, e.g. "?/1946/0/0#" (possibly 1946),
@@ -172,6 +209,25 @@ def _place(name: str | None) -> Place | None:
     return Place(_text(name)) if name else None
 
 
+def _witnesses_from(raw_witnesses: list[dict]) -> list[Witness]:
+    """`WitnessEvent`-shaped dicts (personal event or family `witnesses`
+    list) -> `Witness` models. Same privacy rule as everywhere else: a
+    witness who isn't publicly visible is dropped, not just unlinked."""
+    witnesses = []
+    for w in raw_witnesses:
+        person = w.get("witness")
+        if not person or not is_publicly_visible(person):
+            continue
+        witnesses.append(
+            Witness(
+                person=person_key_from_summary(person),
+                role=WITNESS_TYPE_LABEL.get(w.get("witness_type")),
+                note=_text(w.get("witness_note")) or None,
+            )
+        )
+    return witnesses
+
+
 def individual_from_person(
     person: dict,
 ) -> tuple[Individual, list[Family], set[tuple[PersonKey, int]]]:
@@ -195,20 +251,37 @@ def individual_from_person(
         if event_type is None or event_type.startswith("EFAM_"):
             continue  # family events are attached to the Family record instead
         gedcom_tag = EVENT_TAG_MAP.get(event_type, "EVEN")
+
+        # "reason" isn't confirmed against any real data in this project (never
+        # observed populated) and its exact semantics are unclear, so rather
+        # than guess a GEDCOM tag (e.g. CAUS) that might be wrong, fold it
+        # into the note as labeled free text — preserves the information
+        # without asserting an unconfirmed meaning.
+        note_parts = []
+        if element.get("note"):
+            note_parts.append(_html_to_text(element["note"]))
+        if element.get("reason"):
+            note_parts.append(f"Reason: {_html_to_text(element['reason'])}")
+
         individual.events.append(
             Event(
                 tag=gedcom_tag,
                 date=gedcom_date(element.get("date_raw"), element.get("date_cal"), element.get("date")),
                 place=_place(element.get("place")),
-                note=Note(_html_to_text(element["note"])) if element.get("note") else None,
+                note=Note("\n".join(note_parts)) if note_parts else None,
                 # Only the generic fallback tag needs a TYPE to say what it
                 # actually is; BIRT/DEAT/etc already say that via the tag.
                 type=_text(element.get("name")) if gedcom_tag == "EVEN" else None,
+                source=_html_to_text(element["src"]) if element.get("src") else None,
+                witnesses=_witnesses_from(element.get("witnesses", [])),
             )
         )
 
     if person.get("notes"):
         individual.notes.append(Note(_html_to_text(person["notes"])))
+
+    if person.get("psources"):
+        individual.sources.append(_html_to_text(person["psources"]))
 
     related: set[tuple[PersonKey, int]] = set()
 
@@ -244,17 +317,43 @@ def individual_from_person(
 
         marriage = None
         if fam.get("marriage_date") or fam.get("marriage_place"):
+            marriage_type = fam.get("marriage_type", "MARRIED")
+            marriage_tag = MARRIAGE_TYPE_TAG_MAP.get(marriage_type, "EVEN")
             marriage = Event(
-                tag="MARR",
+                tag=marriage_tag,
                 date=gedcom_date(
                     fam.get("marriage_date_raw"), fam.get("marriage_date_cal"), fam.get("marriage_date")
                 ),
                 place=_place(fam.get("marriage_place")),
+                type=_label_from_enum(marriage_type) if marriage_tag == "EVEN" else None,
+                source=_html_to_text(fam["marriage_src"]) if fam.get("marriage_src") else None,
+                witnesses=_witnesses_from(fam.get("witnesses", [])),
+            )
+
+        divorce = None
+        divorce_type = fam.get("divorce_type", "NOT_DIVORCED")
+        if divorce_type != "NOT_DIVORCED" and (fam.get("divorce_date") or fam.get("divorce_date_raw")):
+            divorce_tag = DIVORCE_TYPE_TAG_MAP.get(divorce_type, "EVEN")
+            divorce = Event(
+                tag=divorce_tag,
+                date=gedcom_date(
+                    fam.get("divorce_date_raw"), fam.get("divorce_date_cal"), fam.get("divorce_date")
+                ),
+                type=_label_from_enum(divorce_type) if divorce_tag == "EVEN" else None,
             )
 
         fam_key = f"{husband or 'UNK'}__{wife or 'UNK'}"
         families.append(
-            Family(key=fam_key, husband=husband, wife=wife, children=children, marriage=marriage)
+            Family(
+                key=fam_key,
+                husband=husband,
+                wife=wife,
+                children=children,
+                marriage=marriage,
+                divorce=divorce,
+                notes=[Note(_html_to_text(fam["notes"]))] if fam.get("notes") else [],
+                sources=[_html_to_text(fam["fsources"])] if fam.get("fsources") else [],
+            )
         )
         individual.family_keys.append(fam_key)
 

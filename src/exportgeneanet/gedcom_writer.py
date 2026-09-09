@@ -41,7 +41,48 @@ class GedcomLines:
         return "\n".join(self._lines) + "\n"
 
 
-def _write_event(g: GedcomLines, level: int, event: Event) -> None:
+def _collect_source_ids(individuals: dict[str, Individual], families: dict[str, Family]) -> dict[str, str]:
+    """Assign a stable `@S<n>@` id to every distinct source citation text
+    found anywhere (events, and Individual/Family general sources), so
+    repeated citations (the same archival record cited for several facts)
+    become one SOUR record referenced by pointer rather than duplicated
+    free text.
+
+    Geneanet only ever gives loose citation text, never a separate
+    repository/archive breakdown, so this project doesn't fabricate GEDCOM
+    REPO records — there's no real repository data to attach them to.
+    """
+    source_ids: dict[str, str] = {}
+
+    def register(text: str | None) -> None:
+        if text and text not in source_ids:
+            source_ids[text] = f"S{len(source_ids) + 1}"
+
+    for individual in individuals.values():
+        for text in individual.sources:
+            register(text)
+        for event in individual.events:
+            register(event.source)
+
+    for family in families.values():
+        for text in family.sources:
+            register(text)
+        if family.marriage:
+            register(family.marriage.source)
+        if family.divorce:
+            register(family.divorce.source)
+
+    return source_ids
+
+
+def _write_event(
+    g: GedcomLines,
+    level: int,
+    event: Event,
+    individuals: dict[str, Individual],
+    source_ids: dict[str, str],
+    include_notes: bool = True,
+) -> None:
     g.add(level, event.tag)
     if event.type:
         g.add(level + 1, "TYPE", event.type)
@@ -49,13 +90,35 @@ def _write_event(g: GedcomLines, level: int, event: Event) -> None:
         g.add(level + 1, "DATE", event.date)
     if event.place:
         g.add(level + 1, "PLAC", event.place.name)
-    if event.note:
+    if event.note and include_notes:
         g.add_text(level + 1, "NOTE", event.note.text)
+    if event.source and event.source in source_ids:
+        g.add(level + 1, "SOUR", f"@{source_ids[event.source]}@")
+    for witness in event.witnesses:
+        # Only link a witness who is actually part of this export — never
+        # fabricate an INDI record just because someone was mentioned as a
+        # witness (that would silently expand the requested export scope).
+        witness_individual = individuals.get(str(witness.person))
+        if witness_individual is None:
+            continue
+        g.add(level + 1, "ASSO", f"@{witness_individual.gedcom_id}@")
+        g.add(level + 2, "TYPE", "INDI")
+        if witness.role:
+            g.add(level + 2, "RELA", witness.role)
+        if witness.note and include_notes:
+            g.add_text(level + 2, "NOTE", witness.note)
 
 
 def _write_notes(g: GedcomLines, level: int, notes: list[Note]) -> None:
     for note in notes:
         g.add_text(level, "NOTE", note.text)
+
+
+def _write_sources(g: GedcomLines, level: int, sources: list[str], source_ids: dict[str, str]) -> None:
+    for text in sources:
+        source_id = source_ids.get(text)
+        if source_id:
+            g.add(level, "SOUR", f"@{source_id}@")
 
 
 def generate_gedcom(
@@ -73,6 +136,8 @@ def generate_gedcom(
     g.add(2, "FORM", "LINEAGE-LINKED")
     g.add(1, "CHAR", "UTF-8")
 
+    source_ids = _collect_source_ids(individuals, families)
+
     # FAMC (family where the individual is a child) is derived from the
     # families' child lists, since Individual only stores father/mother keys.
     famc_by_person: dict[str, str] = {}
@@ -89,13 +154,15 @@ def generate_gedcom(
             g.add(1, "SEX", individual.sex)
 
         for event in individual.events:
-            _write_event(g, 1, event)
+            _write_event(g, 1, event, individuals, source_ids, include_notes)
 
         if individual.occupation:
             g.add(1, "OCCU", individual.occupation)
 
         if include_notes:
             _write_notes(g, 1, individual.notes)
+
+        _write_sources(g, 1, individual.sources, source_ids)
 
         if include_media:
             for media in individual.media:
@@ -122,9 +189,16 @@ def generate_gedcom(
             if str(child) in individuals:
                 g.add(1, "CHIL", f"@{individuals[str(child)].gedcom_id}@")
         if fam.marriage:
-            _write_event(g, 1, fam.marriage)
+            _write_event(g, 1, fam.marriage, individuals, source_ids, include_notes)
+        if fam.divorce:
+            _write_event(g, 1, fam.divorce, individuals, source_ids, include_notes)
         if include_notes:
             _write_notes(g, 1, fam.notes)
+        _write_sources(g, 1, fam.sources, source_ids)
+
+    for text, source_id in source_ids.items():
+        g.add(0, f"@{source_id}@", "SOUR")
+        g.add_text(1, "TITL", text)
 
     g.add(0, "TRLR")
     return g.render()

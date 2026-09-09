@@ -6,7 +6,8 @@ file, using only data that is publicly displayed on the site.
 Given a Geneanet username, the tool can:
 
 - List every individual reachable from one seed individual via family links.
-- Export the entire tree (individuals, families, events, notes, media), or
+- Export the entire tree (individuals, families, events, notes, sources,
+  media), or
   just the **ascendants** of one selected individual.
 
 Command-line only for now; a Qt6 GUI is a possible future addition on top of

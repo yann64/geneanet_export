@@ -103,13 +103,31 @@ Everything lives in `src/exportgeneanet/`:
   before every single request. Hard requirement, not a tunable nicety.
 - **`mapping.py`** — translates protobuf API responses (as plain dicts via
   `google.protobuf.json_format.MessageToDict(..., preserving_proto_field_name=True)`)
-  into `models.py` dataclasses. Holds the `EVENT_TAG_MAP` (Geneanet's
-  `EPERS_*`/`EFAM_*` event-name enum → GEDCOM tag, adapted from the
-  reference addon's `gn_constants.py`, which maps the same enum to Gramps'
-  `EventType` instead) and the privacy check described above. `_text()`/
-  `_html_to_text()` unescape HTML entities that show up even in plain
-  fields like place names (e.g. `"Prud&#39;Homie"`) — apply one of these to
-  any new string field pulled from an API response.
+  into `models.py` dataclasses. Holds several enum → GEDCOM lookup tables,
+  all following the same pattern (map to a specific tag when there's a good
+  match, else fall back to a generic tag + a human-readable `TYPE`/label
+  rather than silently dropping the distinction): `EVENT_TAG_MAP`
+  (`EPERS_*`/`EFAM_*` → tag, adapted from the reference addon's
+  `gn_constants.py`), `MARRIAGE_TYPE_TAG_MAP`, `DIVORCE_TYPE_TAG_MAP`,
+  `WITNESS_TYPE_LABEL`. Also holds `gedcom_date()` (see below) and the
+  privacy check described above. `_text()`/`_html_to_text()` unescape HTML
+  entities that show up even in plain fields like place names (e.g.
+  `"Prud&#39;Homie"`) — apply one of these to any new string field pulled
+  from an API response.
+
+  Source citations (Geneanet's `src`/`psources`/`fsources`/`marriage_src`,
+  all free text — there's no separate repository/archive structure in the
+  API, so this project doesn't fabricate GEDCOM `REPO` records) are carried
+  as plain strings on `Event.source`/`Individual.sources`/`Family.sources`;
+  `gedcom_writer.py` is what dedupes them into `SOUR` records. Event
+  witnesses (`WitnessEvent`: type + a `SimplePerson` + a note) become
+  `Witness` objects on `Event.witnesses`, privacy-checked like any other
+  person reference — `gedcom_writer.py` only emits an `ASSO` pointer for a
+  witness that's actually present in the export, never a fabricated `INDI`.
+  Geneanet's `reason` field on events was never observed populated in any
+  real tree checked so far and its semantics are unconfirmed, so it's
+  folded into the event's `NOTE` as labeled text ("Reason: ...") instead of
+  being asserted as a specific (possibly wrong) GEDCOM tag like `CAUS`.
 - **`models.py`** — plain dataclasses mirroring GEDCOM concepts (`Individual`,
   `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic. Keeps
   `gedcom_writer.py` a thin serializer instead of a second place that
@@ -134,6 +152,12 @@ Everything lives in `src/exportgeneanet/`:
 - **`gedcom_writer.py`** — pure function `generate_gedcom(individuals, families, ...)
   -> str`. Computes `FAMC` (family-as-child) by inverting `Family.children`
   lists, since `Individual` only stores `father`/`mother` keys directly.
+  `_collect_source_ids` does a first pass over every `Event.source`/
+  `Individual.sources`/`Family.sources` to dedupe identical citation text
+  into one `@S<n>@` record referenced by pointer — the same archival record
+  is often cited on several facts. `include_notes=False` suppresses event
+  notes and witness notes too, not just top-level `Individual`/`Family`
+  notes — keep that consistent if adding another note-bearing field.
 - **`cli.py`** — Typer app wiring `list` / `export`. `--individual` is
   required for both (no default-person fallback exists over the API).
 

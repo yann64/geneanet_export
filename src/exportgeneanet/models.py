@@ -34,6 +34,13 @@ class Media:
 
 
 @dataclass
+class Witness:
+    person: PersonKey
+    role: str | None = None  # e.g. "Godparent", "Civil officer"
+    note: str | None = None
+
+
+@dataclass
 class Event:
     """A GEDCOM-style event: tag is e.g. "BIRT", "DEAT", "MARR", "OCCU"."""
 
@@ -45,6 +52,10 @@ class Event:
     # for events mapped to the generic GEDCOM "EVEN" tag — GEDCOM expects EVEN
     # to carry a TYPE describing what kind of event it actually is.
     type: str | None = None
+    # Source citation text for this specific fact (Geneanet's per-event `src`).
+    # Deduplicated into GEDCOM SOUR records by gedcom_writer.py.
+    source: str | None = None
+    witnesses: list[Witness] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +72,8 @@ class Individual:
     mother: PersonKey | None = None
     family_keys: list[str] = field(default_factory=list)  # families where this person is a spouse
     source_url: str | None = None
+    # General (not fact-specific) source citations, e.g. Geneanet's `psources`.
+    sources: list[str] = field(default_factory=list)
 
     @property
     def gedcom_id(self) -> str:
@@ -74,7 +87,10 @@ class Family:
     wife: PersonKey | None = None
     children: list[PersonKey] = field(default_factory=list)
     marriage: Event | None = None
+    divorce: Event | None = None
     notes: list[Note] = field(default_factory=list)
+    # General (not fact-specific) source citations, e.g. Geneanet's `fsources`.
+    sources: list[str] = field(default_factory=list)
 
     @property
     def gedcom_id(self) -> str:
