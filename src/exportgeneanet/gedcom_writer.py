@@ -316,7 +316,7 @@ def generate_gedcom(
 
     for media_id, media in media_records:
         g.add(0, f"@{media_id}@", "OBJE")
-        g.add(1, "FILE", media.url)
+        g.add(1, "FILE", str(media.local_path) if media.local_path else media.url)
         if media.title:
             g.add(1, "TITL", media.title)
         _write_sources(g, 1, media.sources, source_ids)

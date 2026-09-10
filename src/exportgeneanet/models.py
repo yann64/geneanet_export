@@ -9,6 +9,7 @@ second place that understands genealogy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .identifiers import PersonKey
 
@@ -66,6 +67,10 @@ class Media:
     # SOURCE_CITATION substructure (the embedded MULTIMEDIA_LINK form used
     # by earlier versions of this writer can't).
     sources: list[SourceCitation] = field(default_factory=list)
+    # Set only when --download-media actually fetched this file (see
+    # media_downloader.py) — both writers reference this local path instead
+    # of `url` when it's present, `url` otherwise (the default: link only).
+    local_path: Path | None = None
 
 
 @dataclass
