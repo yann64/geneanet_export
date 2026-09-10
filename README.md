@@ -5,10 +5,10 @@ file, using only data that is publicly displayed on the site.
 
 Given a Geneanet username, the tool can:
 
-- List every individual reachable from one seed individual via family links.
+- List every individual reachable from one or more seed individuals via
+  family links.
 - Export the entire tree (individuals, families, events, notes, sources,
-  media), or
-  just the **ascendants** of one selected individual.
+  media), or just the **ascendants** of one or more selected individuals.
 
 Command-line only for now; a Qt6 GUI is a possible future addition on top of
 the same library code.
@@ -76,6 +76,12 @@ exportgeneanet list --username yann64 --individual "etienne.barbel.0"
 exportgeneanet export --username yann64 --scope all \
     --individual "etienne.barbel.0" --output yann64.ged
 
+# A tree isn't guaranteed to be one connected family graph — pass
+# --individual more than once to cover multiple branches in one export
+exportgeneanet export --username yann64 --scope all \
+    --individual "etienne.barbel.0" --individual "anne.cathala.0" \
+    --output yann64.ged
+
 # Export only the ascendants of one individual
 exportgeneanet export --username yann64 --scope ascendants \
     --individual "etienne.barbel.0" --nb-asc 20 --output yann64_ascendants.ged
@@ -87,12 +93,19 @@ exportgeneanet export --username yann64 --scope all \
 
 `--individual` uses the form `given.surname[.oc]`, where `oc` is GeneWeb's
 occurrence number disambiguating people with the same name (defaults to `0`).
-It's always required: there's no confirmed API call for "the tree's default
-person" or "every individual in the tree" the way the old HTML pages
-exposed, so both `list` and `--scope all` use it as a starting point and
-discover the rest of the tree by following family links (parents, spouses,
-children) — which works because a tree is a single connected component in
-practice.
+It's always required (at least one) and repeatable: there's no confirmed API
+call for "the tree's default person" or "every individual in the tree" the
+way the old HTML pages exposed, so both `list` and `--scope all` use the
+given individual(s) as starting points and discover the rest by following
+family links (parents, spouses, children).
+
+**A tree is not guaranteed to be a single connected family graph** — a real,
+full-scale `--scope all` run against a live tree reached only a third of its
+individuals from one seed, missing several of the tree's most common
+surnames entirely (almost certainly an unconnected branch, e.g. a spouse's
+family with no recorded link back). If `--scope all` looks incomplete, pass
+`--individual` again for a person in the missing branch — every seed's
+reachable set gets merged into the same export.
 
 ## Development
 

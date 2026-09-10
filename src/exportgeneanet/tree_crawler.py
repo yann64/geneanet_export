@@ -1,21 +1,29 @@
 """Orchestrates crawling Geneanet's API into a full in-memory dataset.
 
-Two crawl strategies, matching the CLI's `--scope` option:
+Two crawl strategies, matching the CLI's `--scope` option. Both take a list
+of seeds/roots rather than one, merging everything reachable from any of
+them into a single `CrawlState`:
 
-- `crawl_ascendants`: one `graph_v2` call discovers every ancestor's index in
-  a lineage in a single request (instead of walking one relation at a time),
-  then one `get_person` call per discovered ancestor fetches full detail
-  (events/notes/sources — `graph_v2` nodes are lightweight summaries only).
-  Family records are synthesized from each person's own father/mother
-  fields, deliberately ignoring their own spouse/children — ascendants scope
-  stays exactly the lineage, not the extended family of each ancestor.
+- `crawl_ascendants`: one `graph_v2` call per root discovers every ancestor's
+  index in that lineage in a single request (instead of walking one relation
+  at a time), then one `get_person` call per discovered ancestor fetches
+  full detail (events/notes/sources — `graph_v2` nodes are lightweight
+  summaries only). Family records are synthesized from each person's own
+  father/mother fields, deliberately ignoring their own spouse/children —
+  ascendants scope stays exactly the lineage(s), not the extended family of
+  each ancestor.
 - `crawl_full`: BFS over the whole family graph (parents, spouses, children)
-  starting from one seed individual, via the `related` set every
-  `get_person` call already returns. There is no confirmed "list every
-  individual" API action (unlike the old HTML `LIST_IND` listing this
-  project used before the API pivot), so a seed is required — a tree is a
-  single connected component in practice, so BFS from any one person reaches
-  everyone connected to them.
+  from every seed, via the `related` set every `get_person` call already
+  returns. There is no confirmed "list every individual" API action (unlike
+  the old HTML `LIST_IND` listing this project used before the API pivot),
+  so at least one seed is required. **A real Geneanet tree is not
+  guaranteed to be a single connected component** — confirmed directly: a
+  full-scale run against yann64's tree from one seed reached only 175 of
+  ~546 individuals, missing 15 of the tree's 24 most common surnames
+  entirely (almost certainly an unconnected branch, e.g. a spouse's family
+  entered without a recorded link back). Multiple seeds (one per known
+  branch) is how the CLI's `--individual` (repeatable) lets a single export
+  cover more than one component.
 
 Progress is checkpointed to a JSON file after every individual so a crawl
 interrupted partway through (a large full-tree export can take a while once
@@ -131,23 +139,28 @@ def _family_from_dict(d: dict) -> Family:
 
 def crawl_ascendants(
     client: GeneanetApiClient,
-    root: PersonKey,
+    roots: list[PersonKey],
     nb_asc: int = 20,
     state: CrawlState | None = None,
     state_path: Path | None = None,
     on_progress=None,
 ) -> CrawlState:
+    """Ascendants of every root in `roots`, merged into one `CrawlState` — one
+    `get_graph` call per root, deduped against each other (siblings/cousins
+    among the roots share ancestors) as well as against an already-loaded
+    `--resume` state."""
     state = state or CrawlState()
 
     if not state.queue and not state.visited:
-        graph = client.get_graph(p=root.p, n=root.n, oc=root.oc, nb_asc=nb_asc, nb_desc=0)
-        graph_dict = MessageToDict(graph, preserving_proto_field_name=True)
         seen: set[str] = set()
-        for node in graph_dict.get("nodes_asc", []):
-            ref = mapping.person_ref_from_graph_node(node["person"])
-            if ref and str(ref[0]) not in seen:
-                seen.add(str(ref[0]))
-                state.queue.append(ref)
+        for root in dict.fromkeys(roots):
+            graph = client.get_graph(p=root.p, n=root.n, oc=root.oc, nb_asc=nb_asc, nb_desc=0)
+            graph_dict = MessageToDict(graph, preserving_proto_field_name=True)
+            for node in graph_dict.get("nodes_asc", []):
+                ref = mapping.person_ref_from_graph_node(node["person"])
+                if ref and str(ref[0]) not in seen:
+                    seen.add(str(ref[0]))
+                    state.queue.append(ref)
 
     while state.queue:
         key, index = state.queue.pop(0)
@@ -185,32 +198,41 @@ def crawl_ascendants(
     return state
 
 
+def _resolve_seed_index(client: GeneanetApiClient, seed: PersonKey) -> int:
+    result = client.search_persons(lastname=seed.n, firstname=seed.p, limit=5)
+    result_dict = MessageToDict(result, preserving_proto_field_name=True)
+    seed_index = next(
+        (
+            int(p["index"])
+            for p in result_dict.get("persons", [])
+            if (ref := p.get("reference", {}))
+            and ref.get("p", "").lower() == seed.p.lower()
+            and ref.get("n", "").lower() == seed.n.lower()
+            and int(ref.get("oc", 0)) == seed.oc
+        ),
+        None,
+    )
+    if seed_index is None:
+        raise ValueError(f"could not resolve seed individual {seed} via search")
+    return seed_index
+
+
 def crawl_full(
     client: GeneanetApiClient,
-    seed: PersonKey,
+    seeds: list[PersonKey],
     state: CrawlState | None = None,
     state_path: Path | None = None,
     on_progress=None,
 ) -> CrawlState:
+    """BFS from every seed in `seeds`, merged into one `CrawlState` — lets one
+    export cover multiple disconnected branches of a tree (a single seed's
+    BFS only ever reaches its own connected component; a real Geneanet tree
+    is not guaranteed to be one)."""
     state = state or CrawlState()
 
     if not state.queue and not state.visited:
-        result = client.search_persons(lastname=seed.n, firstname=seed.p, limit=5)
-        result_dict = MessageToDict(result, preserving_proto_field_name=True)
-        seed_index = next(
-            (
-                int(p["index"])
-                for p in result_dict.get("persons", [])
-                if (ref := p.get("reference", {}))
-                and ref.get("p", "").lower() == seed.p.lower()
-                and ref.get("n", "").lower() == seed.n.lower()
-                and int(ref.get("oc", 0)) == seed.oc
-            ),
-            None,
-        )
-        if seed_index is None:
-            raise ValueError(f"could not resolve seed individual {seed} via search")
-        state.queue.append((seed, seed_index))
+        for seed in dict.fromkeys(seeds):
+            state.queue.append((seed, _resolve_seed_index(client, seed)))
 
     queue: deque[tuple[PersonKey, int]] = deque(state.queue)
     while queue:

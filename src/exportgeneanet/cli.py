@@ -25,43 +25,46 @@ class Scope(str, Enum):
     ascendants = "ascendants"
 
 
-def _individual_option(help_extra: str = "") -> str:
+def _individual_option(help_extra: str = "") -> list[str]:
     return typer.Option(
         ...,
         help="A known individual in the tree, as 'given.surname[.oc]' (oc is "
-        "GeneWeb's occurrence number disambiguating same-name people, default 0). " + help_extra,
+        "GeneWeb's occurrence number disambiguating same-name people, default 0). "
+        "Repeatable (pass --individual more than once) — a real Geneanet tree isn't "
+        "guaranteed to be a single connected family graph, so one seed per known "
+        "branch may be needed to cover the whole tree. " + help_extra,
     )
 
 
 @app.command("list")
 def list_individuals(
     username: str = typer.Option(..., help="Geneanet username, e.g. 'yann64'."),
-    individual: str = _individual_option(
-        "Used as the starting point to discover the rest of the tree via family "
-        "links (there is no 'list everyone' API call, so a seed is required)."
+    individual: list[str] = _individual_option(
+        "Used as the starting point(s) to discover the rest of the tree via family "
+        "links (there is no 'list everyone' API call, so at least one seed is required)."
     ),
     lang: str = typer.Option(DEFAULT_LANG),
     min_delay: float = typer.Option(DEFAULT_MIN_DELAY_SECONDS),
     max_delay: float = typer.Option(DEFAULT_MAX_DELAY_SECONDS),
 ) -> None:
-    """List every individual reachable from one seed via family links."""
+    """List every individual reachable from the given seed(s) via family links."""
     limiter = RateLimiter(min_delay, max_delay)
     client = GeneanetApiClient(username, limiter, lang=lang)
-    seed = PersonKey.parse(individual)
+    seeds = [PersonKey.parse(i) for i in individual]
 
     def on_progress(ind) -> None:
         typer.echo(f"{ind.key}\t{ind.given_name} {ind.surname}")
 
-    crawl_full(client, seed, on_progress=on_progress)
+    crawl_full(client, seeds, on_progress=on_progress)
 
 
 @app.command()
 def export(
     username: str = typer.Option(..., help="Geneanet username, e.g. 'yann64'."),
     scope: Scope = typer.Option(Scope.ascendants, help="'all' or 'ascendants'."),
-    individual: str = _individual_option(
-        "For --scope ascendants this is the root of the lineage; for --scope all "
-        "it's just a starting point for discovering the rest of the tree."
+    individual: list[str] = _individual_option(
+        "For --scope ascendants these are the root(s) of the lineage(s); for --scope "
+        "all they're just starting points for discovering the rest of the tree."
     ),
     output: Path = typer.Option(..., "--output", "-o", help="Path to the .ged file to write."),
     lang: str = typer.Option(DEFAULT_LANG),
@@ -75,10 +78,10 @@ def export(
         None, help="Checkpoint file path (default: crawl-state-<username>-<scope>.json)."
     ),
 ) -> None:
-    """Crawl the tree (fully, or one individual's ascendants) and write a GEDCOM file."""
+    """Crawl the tree (fully, or one or more lineages' ascendants) and write a GEDCOM file."""
     limiter = RateLimiter(min_delay, max_delay)
     client = GeneanetApiClient(username, limiter, lang=lang)
-    root = PersonKey.parse(individual)
+    roots = [PersonKey.parse(i) for i in individual]
     state_path = state_file or Path.cwd() / f"crawl-state-{username}-{scope.value}.json"
 
     state = CrawlState.load(state_path) if resume and state_path.exists() else None
@@ -87,10 +90,10 @@ def export(
         typer.echo(f"fetched {ind.given_name} {ind.surname}")
 
     if scope is Scope.all:
-        state = crawl_full(client, root, state=state, state_path=state_path, on_progress=on_progress)
+        state = crawl_full(client, roots, state=state, state_path=state_path, on_progress=on_progress)
     else:
         state = crawl_ascendants(
-            client, root, nb_asc=nb_asc, state=state, state_path=state_path, on_progress=on_progress
+            client, roots, nb_asc=nb_asc, state=state, state_path=state_path, on_progress=on_progress
         )
 
     write_gedcom_file(

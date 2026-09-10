@@ -179,20 +179,30 @@ Everything lives in `src/exportgeneanet/`:
   `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic. Keeps
   `gedcom_writer.py` a thin serializer instead of a second place that
   understands genealogy or the API shape.
-- **`tree_crawler.py`** — the two crawl strategies behind `--scope`:
-  - `crawl_ascendants`: one `get_graph(nb_asc=N)` call discovers every
-    ancestor's index in a lineage at once, then one `get_person` call per
-    discovered ancestor for full detail. Family records are synthesized from
-    each person's own `father`/`mother` fields — deliberately ignores their
-    own spouse/children (`individual_from_person`'s `families` return value),
-    keeping an ascendants export to exactly the lineage.
+- **`tree_crawler.py`** — the two crawl strategies behind `--scope`, both
+  taking a **list** of seeds/roots (merged into one `CrawlState`) rather
+  than one:
+  - `crawl_ascendants`: one `get_graph(nb_asc=N)` call per root discovers
+    every ancestor's index in that lineage at once, then one `get_person`
+    call per discovered ancestor for full detail. Family records are
+    synthesized from each person's own `father`/`mother` fields —
+    deliberately ignores their own spouse/children
+    (`individual_from_person`'s `families` return value), keeping an
+    ascendants export to exactly the lineage(s).
   - `crawl_full`: BFS over the whole family graph (parents, spouses,
-    children) via the `related` set every `get_person` call returns,
-    starting from one seed `PersonKey`. There is no confirmed "list every
-    individual" API action (several candidate action names were tried and
-    silently no-opped — Geneanet's API doesn't 404 on unknown actions, it
-    just returns an empty body, making trial-and-error unreliable), so a
-    seed is required; a tree is a single connected component in practice.
+    children) via the `related` set every `get_person` call returns, from
+    every seed (`_resolve_seed_index` per seed, `dict.fromkeys(seeds)`
+    deduped). There is no confirmed "list every individual" API action
+    (several candidate action names were tried and silently no-opped —
+    Geneanet's API doesn't 404 on unknown actions, it just returns an empty
+    body, making trial-and-error unreliable), so at least one seed is
+    required. **Multi-seed exists specifically because a real tree is NOT
+    guaranteed to be one connected component**: a real full-scale run
+    against yann64's tree from a single seed reached only 175 of ~546
+    individuals, missing 15 of the tree's 24 most common surnames
+    entirely — almost certainly an unconnected branch. Don't revert to a
+    single `PersonKey` parameter here without re-confirming that's no
+    longer an issue.
   - Both checkpoint `CrawlState` (visited set, pending `(PersonKey, index)`
     queue, collected individuals/families) to JSON after every individual,
     resumable with `--resume`.
@@ -209,7 +219,10 @@ Everything lives in `src/exportgeneanet/`:
   too, not just top-level `Individual`/`Family` notes — keep that
   consistent if adding another note-bearing field.
 - **`cli.py`** — Typer app wiring `list` / `export`. `--individual` is
-  required for both (no default-person fallback exists over the API).
+  required (at least one) and repeatable (`list[str]`) for both — no
+  default-person fallback exists over the API, and repeatable is what lets
+  one export cover multiple disconnected tree branches (see
+  `tree_crawler.py` above).
 
 ### Data flow for `export`
 
