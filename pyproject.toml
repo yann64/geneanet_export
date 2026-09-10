@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "exportgeneanet"
-version = "0.1.0"
-description = "Export a public Geneanet tree to GEDCOM, respecting Geneanet's usage rules."
+version = "0.2.0"
+description = "Export a public Geneanet tree to GEDCOM or Gramps XML, respecting Geneanet's usage rules."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
