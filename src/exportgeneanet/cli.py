@@ -52,7 +52,7 @@ def list_individuals(
     client = GeneanetApiClient(username, limiter, lang=lang)
     seeds = [PersonKey.parse(i) for i in individual]
 
-    def on_progress(ind) -> None:
+    def on_progress(ind, done=None, total=None) -> None:
         typer.echo(f"{ind.key}\t{ind.given_name} {ind.surname}")
 
     crawl_full(client, seeds, on_progress=on_progress)
@@ -86,8 +86,9 @@ def export(
 
     state = CrawlState.load(state_path) if resume and state_path.exists() else None
 
-    def on_progress(ind) -> None:
-        typer.echo(f"fetched {ind.given_name} {ind.surname}")
+    def on_progress(ind, done=None, total=None) -> None:
+        progress = f"[{done}/{total}] " if total is not None else ""
+        typer.echo(f"{progress}fetched {ind.given_name} {ind.surname}")
 
     if scope is Scope.all:
         state = crawl_full(client, roots, state=state, state_path=state_path, on_progress=on_progress)

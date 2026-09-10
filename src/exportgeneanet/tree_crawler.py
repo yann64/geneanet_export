@@ -162,6 +162,12 @@ def crawl_ascendants(
                     seen.add(str(ref[0]))
                     state.queue.append(ref)
 
+    # Correct whether discovery just ran (queue holds everyone, visited is
+    # empty) or was skipped on --resume (queue holds what's left, visited
+    # holds what a previous run already finished) — the sum is the total
+    # either way.
+    total = len(state.queue) + len(state.visited)
+
     while state.queue:
         key, index = state.queue.pop(0)
         if str(key) in state.visited:
@@ -193,7 +199,7 @@ def crawl_ascendants(
         if state_path is not None:
             state.save(state_path)
         if on_progress is not None:
-            on_progress(individual)
+            on_progress(individual, len(state.visited), total)
 
     return state
 
@@ -253,6 +259,8 @@ def crawl_full(
         if state_path is not None:
             state.save(state_path)
         if on_progress is not None:
-            on_progress(individual)
+            # Total is genuinely unknowable for a full-tree BFS (no "list
+            # everyone" API — new individuals are discovered as we go).
+            on_progress(individual, len(state.visited), None)
 
     return state

@@ -10,8 +10,10 @@ Given a Geneanet username, the tool can:
 - Export the entire tree (individuals, families, events, notes, sources,
   media), or just the **ascendants** of one or more selected individuals.
 
-Command-line only for now; a Qt6 GUI is a possible future addition on top of
-the same library code.
+A Typer-based CLI (`exportgeneanet`) and an optional PySide6 (Qt6) GUI
+(`exportgeneanet-gui`) both sit on top of the same library code — the GUI has
+CLI parity, adding a search-based picker in place of hand-typing individual
+identifiers.
 
 ## How it talks to Geneanet
 
@@ -61,6 +63,9 @@ Two things worth knowing:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+
+# Optional: the exportgeneanet-gui desktop app (PySide6/Qt6)
+pip install -e ".[gui]"
 ```
 
 No browser, no browser profile, nothing to solve by hand — it's a plain
@@ -106,6 +111,19 @@ surnames entirely (almost certainly an unconnected branch, e.g. a spouse's
 family with no recorded link back). If `--scope all` looks incomplete, pass
 `--individual` again for a person in the missing branch — every seed's
 reachable set gets merged into the same export.
+
+### GUI
+
+```bash
+exportgeneanet-gui
+```
+
+Search by surname/given name to pick seed individual(s) instead of typing
+`given.surname.oc` by hand, then the same scope/output/resume/rate-limit
+options as the CLI. Running it without the `gui` extra installed prints a
+`pip install exportgeneanet[gui]` hint instead of a traceback. The GUI and
+CLI share checkpoint files (`crawl-state-<username>-<scope>.json`), so an
+export started in one can be resumed in the other.
 
 ## Development
 

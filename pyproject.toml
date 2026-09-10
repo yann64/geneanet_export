@@ -21,9 +21,13 @@ dev = [
     "grpcio-tools>=1.60",
     "ruff>=0.6",
 ]
+gui = [
+    "PySide6>=6.5",
+]
 
 [project.scripts]
 exportgeneanet = "exportgeneanet.cli:app"
+exportgeneanet-gui = "exportgeneanet.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

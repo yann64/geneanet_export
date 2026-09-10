@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Python CLI that exports a public [Geneanet](https://www.geneanet.org/) tree
+A Python tool that exports a public [Geneanet](https://www.geneanet.org/) tree
 to a GEDCOM 5.5.1 file — either the whole tree or just the ascendants of one
-selected individual. CLI-only today; PySide6 (Qt6) is the intended toolkit for
-a possible future GUI, but is not a current dependency.
+selected individual. Two front ends on the same library code: a Typer CLI
+(`exportgeneanet`) and an optional PySide6 (Qt6) GUI (`exportgeneanet-gui`,
+the `gui` extra — see `src/exportgeneanet/gui/`). The GUI is CLI parity, not
+a separate feature set: same scope/seed/output/resume/rate-limit options,
+just a search-based picker instead of hand-typing `given.surname.oc`.
 
 Test accounts for manual verification: `yann64` (primary), `jpmanzinali`,
 `jloger`.
@@ -16,9 +19,10 @@ Test accounts for manual verification: `yann64` (primary), `jpmanzinali`,
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,gui]"       # gui extra is optional; CLI-only needs just [dev]
 
-pytest                            # full test suite (no network)
+pytest                            # full test suite (no network); GUI tests skip via
+                                   # pytest.importorskip("PySide6") if the gui extra isn't installed
 pytest tests/test_mapping.py::test_individual_from_person_maps_events_and_relations  # single test
 
 ruff check .                      # lint
@@ -27,6 +31,7 @@ ruff format .                     # format (run before committing)
 exportgeneanet list --username yann64 --individual "etienne.barbel.0"
 exportgeneanet export --username yann64 --scope all --individual "etienne.barbel.0" -o yann64.ged
 exportgeneanet export --username yann64 --scope ascendants --individual "etienne.barbel.0" -o out.ged
+exportgeneanet-gui                 # optional Qt6 GUI, same options as export above
 
 python scripts/generate_proto.py   # regenerate src/exportgeneanet/proto/, only if Geneanet's API schema changes
 ```
@@ -205,7 +210,18 @@ Everything lives in `src/exportgeneanet/`:
     longer an issue.
   - Both checkpoint `CrawlState` (visited set, pending `(PersonKey, index)`
     queue, collected individuals/families) to JSON after every individual,
-    resumable with `--resume`.
+    resumable with `--resume`. `state.save(state_path)` always runs *before*
+    the `on_progress` callback for that individual — relied on by the GUI's
+    cancellation handling (see `gui/` below) to guarantee a valid,
+    resumable checkpoint exists the moment `on_progress` raises to cancel.
+  - `on_progress(individual, done, total)`: `total` is a known int for
+    `crawl_ascendants` (the discovered queue length, known right after the
+    `get_graph` call, before the per-person loop starts) but always `None`
+    for `crawl_full` (no "list everyone" API, so the eventual total is
+    genuinely unknowable mid-crawl). `cli.py`'s two `on_progress` closures
+    accept and ignore `done`/`total` where they don't need them; the GUI's
+    `crawl_worker.py` uses them to drive a real percentage progress bar for
+    ascendants exports and a count-only indicator for full-tree ones.
 - **`gedcom_writer.py`** — pure function `generate_gedcom(individuals, families, ...)
   -> str`. Computes `FAMC` (family-as-child) by inverting `Family.children`
   lists, since `Individual` only stores `father`/`mother` keys directly.
@@ -223,6 +239,33 @@ Everything lives in `src/exportgeneanet/`:
   default-person fallback exists over the API, and repeatable is what lets
   one export cover multiple disconnected tree branches (see
   `tree_crawler.py` above).
+- **`gui/`** — the optional `exportgeneanet-gui` PySide6 front end, CLI
+  parity only (no feature the CLI lacks). `[project.scripts]` registers the
+  entry point unconditionally, so `app.py`'s `main()` imports PySide6
+  lazily and prints an install hint (`pip install exportgeneanet[gui]`)
+  instead of a raw traceback when it's missing — `[project.optional-
+  dependencies] gui` stays opt-in for CLI-only installs.
+  `crawl_worker.py`'s `CrawlWorker(QThread)` owns exactly one
+  `GeneanetApiClient`+`RateLimiter` per GUI session; both "search for a
+  person" (`search_persons`) and "run the export" (`crawl_full`/
+  `crawl_ascendants` + `write_gedcom_file`) are tasks pushed onto the same
+  internal `queue.Queue` and processed one at a time in `run()` — this is
+  what keeps the GUI honoring the same never-concurrent,
+  always-rate-limited guarantee as the CLI, not just a threading
+  convenience. Cancellation is a `CrawlCancelled` exception raised from the
+  `on_progress` callback when the user clicks Cancel; it unwinds out of the
+  crawl function mid-loop, and the handler reloads `CrawlState.load(state_path)`
+  from disk rather than trusting the outer (never-reassigned,
+  exception-unwound) `state` variable — safe because of the
+  save-before-on_progress ordering noted under `tree_crawler.py` above.
+  `search_widget.py`'s `search_result_rows()` (pure function, unit-tested
+  in `tests/test_gui_search_widget.py`) and `main_window.py`'s
+  `default_state_path()` (matches `cli.py`'s own
+  `crawl-state-<username>-<scope>.json` convention exactly, so a checkpoint
+  started in one front end resumes in the other) are the only
+  GUI-adjacent logic worth testing without a display; the widgets
+  themselves are exercised by manual testing only (see README's GUI
+  section), not by the automated suite.
 
 ### Data flow for `export`
 
