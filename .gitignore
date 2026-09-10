@@ -5,6 +5,7 @@ venv/
 *.egg-info/
 build/
 dist/
+*.spec
 .pytest_cache/
 
 # Runtime state, not source

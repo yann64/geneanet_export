@@ -24,6 +24,9 @@ dev = [
 gui = [
     "PySide6>=6.5",
 ]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 exportgeneanet = "exportgeneanet.cli:app"

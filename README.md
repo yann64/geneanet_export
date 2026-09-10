@@ -125,6 +125,19 @@ options as the CLI. Running it without the `gui` extra installed prints a
 CLI share checkpoint files (`crawl-state-<username>-<scope>.json`), so an
 export started in one can be resumed in the other.
 
+#### Standalone GUI download (no Python required)
+
+Each tagged release publishes a portable, single-file `exportgeneanet-gui`
+executable for Linux and Windows on the repo's
+[GitHub Releases](../../releases) page — download and run, no Python or
+`pip install` needed. A few things to know:
+
+- It's unsigned: Windows SmartScreen will warn on first run ("more info" →
+  "run anyway"); on Linux, mark the file executable first
+  (`chmod +x exportgeneanet-gui-linux-x86_64`).
+- The CLI isn't packaged this way — it stays a normal `pip install`, since
+  its users already have Python.
+
 ## Development
 
 ```bash
@@ -152,3 +165,15 @@ python scripts/generate_proto.py
 
 This uses `grpc_tools.protoc` (a pip package, part of the `dev` extra) —
 no system-level `protoc` install needed.
+
+### Building the standalone GUI executable
+
+```bash
+pip install -e ".[gui,build]"
+python scripts/build_executable.py
+```
+
+Produces `dist/exportgeneanet-gui` (`.exe` on Windows) via PyInstaller.
+`.github/workflows/release.yml` runs the same script on `ubuntu-latest` and
+`windows-latest` whenever a `v*` tag is pushed, and attaches both
+executables to a GitHub Release.

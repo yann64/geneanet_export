@@ -266,6 +266,18 @@ Everything lives in `src/exportgeneanet/`:
   GUI-adjacent logic worth testing without a display; the widgets
   themselves are exercised by manual testing only (see README's GUI
   section), not by the automated suite.
+- **`packaging/run_gui.py`** + **`scripts/build_executable.py`** — produce
+  the standalone `exportgeneanet-gui` executable (PyInstaller, `build`
+  extra) that `.github/workflows/release.yml` attaches to a GitHub Release
+  on every `v*` tag push, for users without Python (CLI parity only — the
+  CLI itself stays pip-install-only). `run_gui.py` exists specifically
+  because PyInstaller runs its entry script as `__main__`, and `gui/app.py`
+  itself does a relative import (`from .main_window import MainWindow`)
+  that only works when imported as part of the `exportgeneanet` package —
+  exactly how the pip-installed console script already runs it
+  (`from exportgeneanet.gui.app import main`). `run_gui.py` does that same
+  absolute import instead of being frozen directly, so don't point
+  PyInstaller at `gui/app.py` itself.
 
 ### Data flow for `export`
 
