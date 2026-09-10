@@ -116,6 +116,9 @@ ruff check .    # lint
 ruff format .   # format
 ```
 
+CI (`.github/workflows/ci.yml`) runs all three on every push/PR to `main`,
+against Python 3.10 (the declared minimum) and 3.12.
+
 Tests in `tests/` cover the GEDCOM writer, protobuf-response mapping,
 person identifiers, and crawl-state checkpointing — all without network
 access.
