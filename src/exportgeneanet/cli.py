@@ -12,6 +12,7 @@ from .config import DEFAULT_LANG, DEFAULT_MAX_DELAY_SECONDS, DEFAULT_MIN_DELAY_S
 from .gedcom_writer import write_gedcom_file
 from .gramps_writer import write_gramps_file
 from .identifiers import PersonKey
+from .media_downloader import download_media
 from .rate_limiter import RateLimiter
 from .tree_crawler import CrawlState, crawl_ascendants, crawl_full
 
@@ -95,12 +96,27 @@ def export(
     nb_asc: int = typer.Option(20, help="--scope ascendants only: how many generations up to fetch."),
     include_notes: bool = typer.Option(True),
     include_media: bool = typer.Option(True),
+    download_media_files: bool = typer.Option(
+        False,
+        "--download-media",
+        help="Download media files to --media-dir instead of just linking the remote URL.",
+    ),
+    media_dir: Path | None = typer.Option(
+        None, help="Folder to save downloaded media files to (required with --download-media)."
+    ),
     resume: bool = typer.Option(False, help="Resume from a previous interrupted run's checkpoint."),
     state_file: Path | None = typer.Option(
         None, help="Checkpoint file path (default: crawl-state-<username>-<scope>.json)."
     ),
 ) -> None:
     """Crawl the tree (fully, or one or more lineages' ascendants) and write a GEDCOM or Gramps XML file."""
+    if download_media_files and not include_media:
+        typer.echo("Error: --download-media requires --include-media.", err=True)
+        raise typer.Exit(1)
+    if download_media_files and media_dir is None:
+        typer.echo("Error: --media-dir is required with --download-media.", err=True)
+        raise typer.Exit(1)
+
     limiter = RateLimiter(min_delay, max_delay)
     client = GeneanetApiClient(username, limiter, lang=lang)
     roots = [PersonKey.parse(i) for i in individual]
@@ -118,6 +134,16 @@ def export(
         state = crawl_ascendants(
             client, roots, nb_asc=nb_asc, state=state, state_path=state_path, on_progress=on_progress
         )
+
+    if download_media_files:
+        for ind in state.individuals.values():
+            for i, media in enumerate(ind.media):
+                try:
+                    media.local_path = download_media(
+                        client.session, limiter, media.url, ind.key, i, media_dir
+                    )
+                except Exception as exc:  # noqa: BLE001 - one bad media URL shouldn't abort the export
+                    typer.echo(f"Warning: failed to download media for {ind.key}: {exc}", err=True)
 
     write_file = write_gedcom_file if format is ExportFormat.gedcom else write_gramps_file
     write_file(
