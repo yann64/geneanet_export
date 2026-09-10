@@ -4,9 +4,11 @@ from exportgeneanet.models import (
     AlternateName,
     Event,
     Family,
+    GenealogyDate,
     Individual,
     Media,
     Note,
+    PartialDate,
     Place,
     SourceCitation,
     Witness,
@@ -27,7 +29,7 @@ def _sample_data():
         sex="M",
         father=father_key,
         mother=mother_key,
-        events=[Event(tag="BIRT", date="1 JAN 1950", place=Place("Paris"))],
+        events=[Event(tag="BIRT", date=GenealogyDate(fallback_text="1 JAN 1950"), place=Place("Paris"))],
         notes=[Note("A note about Jean.")],
     )
 
@@ -36,7 +38,7 @@ def _sample_data():
         husband=father_key,
         wife=mother_key,
         children=[child_key],
-        marriage=Event(tag="MARR", date="5 JUN 1945"),
+        marriage=Event(tag="MARR", date=GenealogyDate(fallback_text="5 JUN 1945")),
     )
 
     individuals = {str(k): v for k, v in [(father_key, father), (mother_key, mother), (child_key, child)]}
@@ -75,6 +77,38 @@ def test_generate_gedcom_individual_record():
     assert "2 PLAC Paris" in gedcom
 
 
+def _gedcom_date_for(date: GenealogyDate) -> str:
+    """Render a single BIRT event's DATE line for one `GenealogyDate` —
+    used to check that structured dates render to the exact same GEDCOM
+    text the old string-based date parser used to produce directly,
+    before the parse/render split (see mapping.parse_geneweb_date)."""
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key, given_name="Jean", surname="Dupont", events=[Event(tag="BIRT", date=date)]
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+    return lines[lines.index("1 BIRT") + 1].removeprefix("2 DATE ")
+
+
+def test_generate_gedcom_date_qualifiers():
+    assert _gedcom_date_for(GenealogyDate(date=PartialDate(year=1687, month=1))) == "JAN 1687"
+    assert _gedcom_date_for(GenealogyDate(qualifier="EST", date=PartialDate(year=1946))) == "EST 1946"
+    assert _gedcom_date_for(GenealogyDate(qualifier="ABT", date=PartialDate(year=1668))) == "ABT 1668"
+    assert _gedcom_date_for(GenealogyDate(qualifier="BEF", date=PartialDate(year=1891))) == "BEF 1891"
+    assert _gedcom_date_for(GenealogyDate(qualifier="AFT", date=PartialDate(year=1823))) == "AFT 1823"
+
+
+def test_generate_gedcom_date_between_range():
+    date = GenealogyDate(range_start=PartialDate(year=1652), range_end=PartialDate(year=1654))
+    assert _gedcom_date_for(date) == "BET 1652 AND 1654"
+
+
+def test_generate_gedcom_date_julian_uses_calendar_escape():
+    date = GenealogyDate(date=PartialDate(year=1700, month=3, day=1), calendar="JULIAN")
+    assert _gedcom_date_for(date) == "@#DJULIAN@ 1 MAR 1700"
+
+
 def test_generate_gedcom_family_links():
     individuals, families = _sample_data()
     gedcom = generate_gedcom(individuals, families)
@@ -98,7 +132,7 @@ def test_generate_gedcom_generic_event_includes_type():
         key=key,
         given_name="Jean",
         surname="Dupont",
-        events=[Event(tag="EVEN", date="1946", type="Correspondance")],
+        events=[Event(tag="EVEN", date=GenealogyDate(fallback_text="1946"), type="Correspondance")],
     )
     gedcom = generate_gedcom({str(key): individual}, {})
     lines = gedcom.splitlines()
@@ -114,13 +148,25 @@ def test_generate_gedcom_dedupes_repeated_source_citation():
         key=key1,
         given_name="Jean",
         surname="Dupont",
-        events=[Event(tag="BIRT", date="1950", sources=[SourceCitation(title=same_text)])],
+        events=[
+            Event(
+                tag="BIRT",
+                date=GenealogyDate(fallback_text="1950"),
+                sources=[SourceCitation(title=same_text)],
+            )
+        ],
     )
     ind2 = Individual(
         key=key2,
         given_name="Paul",
         surname="Dupont",
-        events=[Event(tag="BIRT", date="1952", sources=[SourceCitation(title=same_text)])],
+        events=[
+            Event(
+                tag="BIRT",
+                date=GenealogyDate(fallback_text="1952"),
+                sources=[SourceCitation(title=same_text)],
+            )
+        ],
     )
     gedcom = generate_gedcom({str(key1): ind1, str(key2): ind2}, {})
     assert gedcom.count("0 @S1@ SOUR") == 1
@@ -190,7 +236,12 @@ def test_generate_gedcom_no_repo_when_no_geneanet_source():
 def test_generate_gedcom_divorce_event():
     key1 = PersonKey(p="jean", n="dupont", oc=0)
     key2 = PersonKey(p="marie", n="martin", oc=0)
-    family = Family(key="fam1", husband=key1, wife=key2, divorce=Event(tag="DIV", date="1960"))
+    family = Family(
+        key="fam1",
+        husband=key1,
+        wife=key2,
+        divorce=Event(tag="DIV", date=GenealogyDate(fallback_text="1960")),
+    )
     gedcom = generate_gedcom({}, {"fam1": family})
     assert "1 DIV" in gedcom
     assert "2 DATE 1960" in gedcom

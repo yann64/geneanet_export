@@ -1,7 +1,9 @@
 """In-memory representation of the genealogical data scraped from Geneanet.
 
-These map fairly directly onto GEDCOM concepts so `gedcom_writer.py` can stay
-a thin serializer rather than a second place that understands genealogy.
+Format-agnostic by design (despite a few GEDCOM-flavored field names, e.g.
+`Event.tag`) — both `gedcom_writer.py` and `gramps_writer.py` serialize
+these same dataclasses, so either stays a thin serializer rather than a
+second place that understands genealogy.
 """
 
 from __future__ import annotations
@@ -14,6 +16,39 @@ from .identifiers import PersonKey
 @dataclass
 class Place:
     name: str
+
+
+@dataclass(frozen=True)
+class PartialDate:
+    """One point in time with GeneWeb's partial-precision semantics: year is
+    always known, `month`/`day` may be `0` (unknown) — the same convention
+    GeneWeb's own `*_date_raw` encoding already uses, so `mapping.py`'s
+    parser can build this directly without inventing a new precision
+    scheme."""
+
+    year: int
+    month: int = 0
+    day: int = 0
+
+
+@dataclass(frozen=True)
+class GenealogyDate:
+    """A format-agnostic date, parsed once by `mapping.py` and rendered by
+    each writer into its own textual/structured syntax (GEDCOM's `DATE`
+    value string / Gramps's `dateval`+`daterange` elements) — keeps the
+    GeneWeb date-precision parsing itself shared rather than duplicated per
+    writer. Exactly one of `date` or `range_start`+`range_end` is set for a
+    successfully parsed date; `fallback_text` is set instead (with
+    everything else left at its default) when parsing wasn't possible —
+    e.g. an unrecognized calendar, where Geneanet's own localized display
+    text is used rather than risk emitting a wrong date."""
+
+    qualifier: str | None = None  # None | "EST" | "ABT" | "BEF" | "AFT" (GEDCOM vocabulary)
+    date: PartialDate | None = None  # a single point in time
+    range_start: PartialDate | None = None  # BET...AND, together with range_end
+    range_end: PartialDate | None = None
+    calendar: str = "GREGORIAN"  # or "JULIAN"
+    fallback_text: str | None = None
 
 
 @dataclass
@@ -83,7 +118,7 @@ class Event:
     """A GEDCOM-style event: tag is e.g. "BIRT", "DEAT", "MARR", "OCCU"."""
 
     tag: str
-    date: str | None = None
+    date: GenealogyDate | None = None
     place: Place | None = None
     note: Note | None = None
     # Subordinate TYPE value, e.g. Geneanet's own event label ("Correspondance")

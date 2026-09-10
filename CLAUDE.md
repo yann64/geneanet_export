@@ -122,8 +122,8 @@ Everything lives in `src/exportgeneanet/`:
   rather than silently dropping the distinction): `EVENT_TAG_MAP`
   (`EPERS_*`/`EFAM_*` → tag, adapted from the reference addon's
   `gn_constants.py`), `MARRIAGE_TYPE_TAG_MAP`, `DIVORCE_TYPE_TAG_MAP`,
-  `WITNESS_TYPE_LABEL`. Also holds `gedcom_date()` (see below) and the
-  privacy check described above. `_text()`/`_html_to_text()` unescape HTML
+  `WITNESS_TYPE_LABEL`. Also holds `parse_geneweb_date()` (see below) and
+  the privacy check described above. `_text()`/`_html_to_text()` unescape HTML
   entities that show up even in plain fields like place names (e.g.
   `"Prud&#39;Homie"`) — apply one of these to any new string field pulled
   from an API response.

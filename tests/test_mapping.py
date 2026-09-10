@@ -1,13 +1,13 @@
 from exportgeneanet.identifiers import PersonKey
 from exportgeneanet.mapping import (
-    gedcom_date,
     geneanet_tree_citation,
     individual_from_person,
     is_publicly_visible,
+    parse_geneweb_date,
     person_citation_url,
     person_ref_from_graph_node,
 )
-from exportgeneanet.models import AlternateName
+from exportgeneanet.models import AlternateName, GenealogyDate, PartialDate
 
 USERNAME = "yann64"
 
@@ -116,7 +116,7 @@ def test_individual_from_person_maps_events_and_relations():
     assert fam.wife == PersonKey(p="marie", n="chauvin", oc=0)
     assert fam.children == [PersonKey(p="paul", n="barbel", oc=0)]
     assert fam.marriage.tag == "MARR"
-    assert fam.marriage.date == "10 Feb 1906"
+    assert fam.marriage.date.fallback_text == "10 Feb 1906"
 
     assert (PersonKey(p="guillaume", n="barbel", oc=0), 11) in related
     assert (PersonKey(p="marguerite", n="guiraud", oc=0), 12) in related
@@ -140,56 +140,72 @@ def test_individual_from_person_excludes_hidden_parent():
     assert related == set()
 
 
-def test_gedcom_date_sure_full_date():
-    assert gedcom_date("/1882/1/23#", "GREGORIAN", "Jan. 23, 1882") == "23 JAN 1882"
+def test_parse_geneweb_date_sure_full_date():
+    d = parse_geneweb_date("/1882/1/23#", "GREGORIAN", "Jan. 23, 1882")
+    assert d == GenealogyDate(date=PartialDate(year=1882, month=1, day=23), calendar="GREGORIAN")
 
 
-def test_gedcom_date_year_only():
-    assert gedcom_date("/1906/0/0#", "GREGORIAN", "1906") == "1906"
+def test_parse_geneweb_date_year_only():
+    d = parse_geneweb_date("/1906/0/0#", "GREGORIAN", "1906")
+    assert d == GenealogyDate(date=PartialDate(year=1906), calendar="GREGORIAN")
 
 
-def test_gedcom_date_month_and_year_only():
-    assert gedcom_date("?/1687/1/0#", "GREGORIAN", "possibly Jan., 1687") == "EST JAN 1687"
+def test_parse_geneweb_date_month_and_year_only():
+    d = parse_geneweb_date("?/1687/1/0#", "GREGORIAN", "possibly Jan., 1687")
+    assert d == GenealogyDate(qualifier="EST", date=PartialDate(year=1687, month=1), calendar="GREGORIAN")
 
 
-def test_gedcom_date_maybe_maps_to_est():
-    # This is the bug report: "peut-être 1946" must not leak into GEDCOM;
-    # GeneWeb's "?" precision maps to GEDCOM's EST qualifier.
-    assert gedcom_date("?/1946/0/0#", "GREGORIAN", "peut-être 1946") == "EST 1946"
+def test_parse_geneweb_date_maybe_maps_to_est():
+    # This is the original bug report: "peut-être 1946" (Geneanet's own
+    # display text) must not leak into the export; GeneWeb's "?" precision
+    # maps to GEDCOM's EST qualifier instead.
+    d = parse_geneweb_date("?/1946/0/0#", "GREGORIAN", "peut-être 1946")
+    assert d == GenealogyDate(qualifier="EST", date=PartialDate(year=1946), calendar="GREGORIAN")
 
 
-def test_gedcom_date_about():
-    assert gedcom_date("~/1668/0/0#", "GREGORIAN", "about 1668") == "ABT 1668"
+def test_parse_geneweb_date_about():
+    d = parse_geneweb_date("~/1668/0/0#", "GREGORIAN", "about 1668")
+    assert d == GenealogyDate(qualifier="ABT", date=PartialDate(year=1668), calendar="GREGORIAN")
 
 
-def test_gedcom_date_before():
-    assert gedcom_date("</1891/0/0#", "GREGORIAN", "before 1891") == "BEF 1891"
+def test_parse_geneweb_date_before():
+    d = parse_geneweb_date("</1891/0/0#", "GREGORIAN", "before 1891")
+    assert d == GenealogyDate(qualifier="BEF", date=PartialDate(year=1891), calendar="GREGORIAN")
 
 
-def test_gedcom_date_after():
-    assert gedcom_date(">/1823/0/0#", "GREGORIAN", "after 1823") == "AFT 1823"
+def test_parse_geneweb_date_after():
+    d = parse_geneweb_date(">/1823/0/0#", "GREGORIAN", "after 1823")
+    assert d == GenealogyDate(qualifier="AFT", date=PartialDate(year=1823), calendar="GREGORIAN")
 
 
-def test_gedcom_date_between_range():
-    assert gedcom_date("/1652/0/0#../1654/0/0", "GREGORIAN", "between 1652 and 1654") == "BET 1652 AND 1654"
+def test_parse_geneweb_date_between_range():
+    d = parse_geneweb_date("/1652/0/0#../1654/0/0", "GREGORIAN", "between 1652 and 1654")
+    assert d == GenealogyDate(range_start=PartialDate(year=1652), range_end=PartialDate(year=1654))
 
 
-def test_gedcom_date_julian_uses_calendar_escape():
-    assert gedcom_date("/1700/3/1#", "JULIAN", "1 Mar 1700") == "@#DJULIAN@ 1 MAR 1700"
+def test_parse_geneweb_date_julian_keeps_calendar():
+    d = parse_geneweb_date("/1700/3/1#", "JULIAN", "1 Mar 1700")
+    assert d == GenealogyDate(date=PartialDate(year=1700, month=3, day=1), calendar="JULIAN")
 
 
-def test_gedcom_date_unparseable_calendar_falls_back_to_text():
+def test_parse_geneweb_date_unparseable_calendar_falls_back_to_text():
     # French Republican raw numbers don't reliably map to plain D/M/Y —
     # deliberately not parsed; the localized text is used as-is instead.
-    assert gedcom_date("?/1805/1/13#", "FRENCH", "23 Nivose year XIII") == "23 Nivose year XIII"
+    d = parse_geneweb_date("?/1805/1/13#", "FRENCH", "23 Nivose year XIII")
+    assert d == GenealogyDate(fallback_text="23 Nivose year XIII")
 
 
-def test_gedcom_date_missing_raw_falls_back_to_text():
-    assert gedcom_date(None, None, "some free text") == "some free text"
+def test_parse_geneweb_date_missing_raw_falls_back_to_text():
+    assert parse_geneweb_date(None, None, "some free text") == GenealogyDate(fallback_text="some free text")
 
 
-def test_gedcom_date_unrecognized_raw_falls_back_to_text():
-    assert gedcom_date("BEF 1905 AFT 1907", None, "(BEF 1905 AFT 1907)") == "(BEF 1905 AFT 1907)"
+def test_parse_geneweb_date_unrecognized_raw_falls_back_to_text():
+    d = parse_geneweb_date("BEF 1905 AFT 1907", None, "(BEF 1905 AFT 1907)")
+    assert d == GenealogyDate(fallback_text="(BEF 1905 AFT 1907)")
+
+
+def test_parse_geneweb_date_nothing_at_all_returns_none():
+    assert parse_geneweb_date(None, None, None) is None
 
 
 def test_individual_from_person_sets_type_on_generic_events_only():

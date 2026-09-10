@@ -23,7 +23,19 @@ from urllib.parse import quote
 
 from .config import GENEANET_WEB_BASE_URL
 from .identifiers import PersonKey
-from .models import AlternateName, Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
+from .models import (
+    AlternateName,
+    Event,
+    Family,
+    GenealogyDate,
+    Individual,
+    Media,
+    Note,
+    PartialDate,
+    Place,
+    SourceCitation,
+    Witness,
+)
 
 _SEX_MAP = {"MALE": "M", "FEMALE": "F", "UNKNOWN": "U"}
 
@@ -130,74 +142,57 @@ _DATE_PART_RE = re.compile(r"^(?P<prefix>[?~<>]?)/?(?P<year>-?\d+)/(?P<month>\d+
 # "maybe" qualifier GEDCOM doesn't have.
 _PRECISION_TO_QUALIFIER = {"?": "EST", "~": "ABT", "<": "BEF", ">": "AFT"}
 
-_MONTH_ABBR = [
-    None,
-    "JAN",
-    "FEB",
-    "MAR",
-    "APR",
-    "MAY",
-    "JUN",
-    "JUL",
-    "AUG",
-    "SEP",
-    "OCT",
-    "NOV",
-    "DEC",
-]
-
-# GEDCOM calendar escapes for calendars where date_raw's Y/M/D numbers are
-# straightforward (Gregorian needs no escape; Julian uses the same D/M/Y
-# numbering). FRENCH/HEBREW raw values were NOT confirmed to use plain D/M/Y
-# numbering (a real French-Republican example's numbers didn't match its own
-# displayed date) — rather than risk silently emitting a wrong date, those
-# fall back to Geneanet's localized display text instead of being parsed.
-_CALENDAR_ESCAPE = {"JULIAN": "@#DJULIAN@"}
+# Calendars where date_raw's Y/M/D numbers are straightforward (Gregorian
+# and Julian use the same D/M/Y numbering). FRENCH/HEBREW raw values were
+# NOT confirmed to use plain D/M/Y numbering (a real French-Republican
+# example's numbers didn't match its own displayed date) — rather than risk
+# silently emitting a wrong date, those fall back to Geneanet's localized
+# display text instead of being parsed. (GEDCOM's Julian calendar escape
+# and Gramps's own calendar handling are writer concerns — see
+# gedcom_writer.py/gramps_writer.py, not here.)
 _PARSEABLE_RAW_CALENDARS = {"GREGORIAN", "JULIAN", None}
 
 
-def _format_dmy(year: str, month: int, day: int) -> str:
-    parts = []
-    if month and day:
-        parts.append(str(day))
-    if month:
-        parts.append(_MONTH_ABBR[month])
-    parts.append(year)
-    return " ".join(parts)
-
-
-def _parse_date_part(raw: str) -> str | None:
+def _parse_date_part(raw: str) -> tuple[str | None, PartialDate | None]:
+    """Returns `(qualifier, PartialDate)`, or `(None, None)` if `raw` isn't
+    in GeneWeb's `*_date_raw` form at all."""
     m = _DATE_PART_RE.match(raw)
     if not m:
-        return None
-    dmy = _format_dmy(m["year"], int(m["month"]), int(m["day"]))
+        return None, None
     qualifier = _PRECISION_TO_QUALIFIER.get(m["prefix"])
-    return f"{qualifier} {dmy}" if qualifier else dmy
+    return qualifier, PartialDate(year=int(m["year"]), month=int(m["month"]), day=int(m["day"]))
 
 
-def gedcom_date(raw: str | None, calendar: str | None, fallback_text: str | None) -> str | None:
-    """Convert a GeneWeb `*_date_raw` value into a GEDCOM 5.5.1 DATE value
-    (`DD MON YYYY`, with ABT/EST/BEF/AFT/BET...AND qualifiers as needed).
-    Falls back to Geneanet's own localized display text — not GEDCOM-valid,
-    but better than losing the information — when `raw` is absent or in a
-    form this parser doesn't recognize (e.g. an unparsed calendar, or the
-    rare non-D/M/Y interval encodings GeneWeb occasionally emits)."""
+def parse_geneweb_date(
+    raw: str | None, calendar: str | None, fallback_text: str | None
+) -> GenealogyDate | None:
+    """Convert a GeneWeb `*_date_raw` value into a format-agnostic
+    `GenealogyDate` (year/month/day with GEDCOM-vocabulary qualifiers —
+    each writer renders this into its own textual/structured date syntax).
+    Falls back to Geneanet's own localized display text (`fallback_text`,
+    via `GenealogyDate.fallback_text` — not a parsed date, but better than
+    losing the information) when `raw` is absent or in a form this parser
+    doesn't recognize (e.g. an unparsed calendar, or the rare non-D/M/Y
+    interval encodings GeneWeb occasionally emits). Returns `None`
+    (matching the absence of any date info at all) only when there's
+    neither a parseable date nor any fallback text either."""
+    fallback_text = _text(fallback_text)
+
     if not raw or calendar not in _PARSEABLE_RAW_CALENDARS:
-        return _text(fallback_text)
+        return GenealogyDate(fallback_text=fallback_text) if fallback_text else None
 
     if "#.." in raw:
         left_raw, right_raw = raw.split("#..", 1)
-        left = _parse_date_part(left_raw)
-        right = _parse_date_part(right_raw)
+        _, left = _parse_date_part(left_raw)
+        _, right = _parse_date_part(right_raw)
         if left and right:
-            return f"BET {left} AND {right}"
-        return _text(fallback_text)
+            return GenealogyDate(range_start=left, range_end=right)
+        return GenealogyDate(fallback_text=fallback_text) if fallback_text else None
 
-    date_str = _parse_date_part(raw)
-    if date_str is None:
-        return _text(fallback_text)
-    escape = _CALENDAR_ESCAPE.get(calendar or "GREGORIAN")
-    return f"{escape} {date_str}" if escape else date_str
+    qualifier, date = _parse_date_part(raw)
+    if date is None:
+        return GenealogyDate(fallback_text=fallback_text) if fallback_text else None
+    return GenealogyDate(qualifier=qualifier, date=date, calendar=calendar or "GREGORIAN")
 
 
 def _html_to_text(text: str) -> str:
@@ -395,7 +390,9 @@ def individual_from_person(
         individual.events.append(
             Event(
                 tag=gedcom_tag,
-                date=gedcom_date(element.get("date_raw"), element.get("date_cal"), element.get("date")),
+                date=parse_geneweb_date(
+                    element.get("date_raw"), element.get("date_cal"), element.get("date")
+                ),
                 place=_place(element.get("place")),
                 note=Note("\n".join(note_parts)) if note_parts else None,
                 # Only the generic fallback tag needs a TYPE to say what it
@@ -454,7 +451,7 @@ def individual_from_person(
                 marriage_sources.append(SourceCitation(title=_html_to_text(fam["marriage_src"])))
             marriage = Event(
                 tag=marriage_tag,
-                date=gedcom_date(
+                date=parse_geneweb_date(
                     fam.get("marriage_date_raw"), fam.get("marriage_date_cal"), fam.get("marriage_date")
                 ),
                 place=_place(fam.get("marriage_place")),
@@ -469,7 +466,7 @@ def individual_from_person(
             divorce_tag = DIVORCE_TYPE_TAG_MAP.get(divorce_type, "EVEN")
             divorce = Event(
                 tag=divorce_tag,
-                date=gedcom_date(
+                date=parse_geneweb_date(
                     fam.get("divorce_date_raw"), fam.get("divorce_date_cal"), fam.get("divorce_date")
                 ),
                 type=_label_from_enum(divorce_type) if divorce_tag == "EVEN" else None,

@@ -10,10 +10,61 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .config import GENEANET_REPOSITORY_NAME, GENEANET_REPOSITORY_WWW
-from .models import Event, Family, Individual, Media, Note, SourceCitation, Witness
+from .models import Event, Family, GenealogyDate, Individual, Media, Note, SourceCitation, Witness
 
 _MAX_LINE_CHARS = 200  # conservative CONC threshold; GEDCOM 5.5.1 caps at 255
 _GENEANET_REPOSITORY_ID = "R1"
+
+_MONTH_ABBR = [
+    None,
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+]
+
+# GEDCOM calendar escape for calendars where GenealogyDate's Y/M/D numbers
+# are straightforward (Gregorian needs no escape; Julian uses the same D/M/Y
+# numbering — see mapping._PARSEABLE_RAW_CALENDARS).
+_CALENDAR_ESCAPE = {"JULIAN": "@#DJULIAN@"}
+
+
+def _format_dmy(year: int, month: int, day: int) -> str:
+    parts = []
+    if month and day:
+        parts.append(str(day))
+    if month:
+        parts.append(_MONTH_ABBR[month])
+    parts.append(str(year))
+    return " ".join(parts)
+
+
+def _render_gedcom_date(d: GenealogyDate) -> str:
+    """Render a `GenealogyDate` into a GEDCOM 5.5.1 DATE value (`DD MON
+    YYYY`, with ABT/EST/BEF/AFT/BET...AND qualifiers as needed) — the exact
+    same output the old `mapping.gedcom_date()` used to produce directly,
+    before it split into `mapping.parse_geneweb_date()` (parsing) and this
+    function (rendering). `fallback_text` (Geneanet's own
+    localized display text, not GEDCOM-valid) passes straight through
+    unchanged, same as before."""
+    if d.fallback_text is not None:
+        return d.fallback_text
+    if d.range_start and d.range_end:
+        left = _format_dmy(d.range_start.year, d.range_start.month, d.range_start.day)
+        right = _format_dmy(d.range_end.year, d.range_end.month, d.range_end.day)
+        return f"BET {left} AND {right}"
+    dmy = _format_dmy(d.date.year, d.date.month, d.date.day)
+    rendered = f"{d.qualifier} {dmy}" if d.qualifier else dmy
+    escape = _CALENDAR_ESCAPE.get(d.calendar)
+    return f"{escape} {rendered}" if escape else rendered
 
 
 class GedcomLines:
@@ -113,7 +164,7 @@ def _write_event(
     if event.type:
         g.add(level + 1, "TYPE", event.type)
     if event.date:
-        g.add(level + 1, "DATE", event.date)
+        g.add(level + 1, "DATE", _render_gedcom_date(event.date))
     if event.place:
         g.add(level + 1, "PLAC", event.place.name)
     if event.note and include_notes:
