@@ -35,7 +35,7 @@ from google.protobuf.json_format import MessageToDict
 from . import mapping
 from .api_client import GeneanetApiClient
 from .identifiers import PersonKey
-from .models import Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
+from .models import AlternateName, Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
 
 
 @dataclass
@@ -76,6 +76,10 @@ def _witness_from_dict(d: dict) -> Witness:
     return Witness(person=PersonKey(**d["person"]), role=d.get("role"), note=d.get("note"))
 
 
+def _alternate_name_from_dict(d: dict) -> AlternateName:
+    return AlternateName(given=d["given"], surname=d.get("surname"), type=d.get("type", "aka"))
+
+
 def _event_from_dict(d: dict | None) -> Event | None:
     if d is None:
         return None
@@ -105,6 +109,10 @@ def _individual_from_dict(d: dict) -> Individual:
         family_keys=list(d.get("family_keys", [])),
         source_url=d.get("source_url"),
         sources=[_source_citation_from_dict(s) for s in d.get("sources", [])],
+        nickname=d.get("nickname"),
+        titles=list(d.get("titles", [])),
+        names=[_alternate_name_from_dict(n) for n in d.get("names", [])],
+        associations=[_witness_from_dict(w) for w in d.get("associations", [])],
     )
 
 

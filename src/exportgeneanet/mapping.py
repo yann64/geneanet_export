@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 from .config import GENEANET_WEB_BASE_URL
 from .identifiers import PersonKey
-from .models import Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
+from .models import AlternateName, Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
 
 _SEX_MAP = {"MALE": "M", "FEMALE": "F", "UNKNOWN": "U"}
 
@@ -89,6 +89,26 @@ WITNESS_TYPE_LABEL = {
     "WITNESS_ATTENDING": "Attending",
     "WITNESS_MENTIONED": "Mentioned",
     "WITNESS_OTHER": "Witness",
+}
+
+# Geneanet's RelationType enum (Person.related / Person.rparents) -> a
+# human-readable GEDCOM ASSO/RELA role. RPARENT_* = someone who is this kind
+# of non-biological parent *to* this person; RCHILD_* = this person is that
+# kind of non-biological parent *to* the related person (so the label
+# describes the related person, e.g. "Godchild"). Confirmed real
+# (RPARENT_GOD_PARENT) in jpmanzinali's tree; the rest are schema-confirmed
+# but not seen populated in any tree checked so far.
+RELATION_TYPE_LABEL = {
+    "RPARENT_ADOPTION": "Adoptive parent",
+    "RPARENT_RECOGNITION": "Parent by recognition",
+    "RPARENT_CANDIDATE_PARENT": "Candidate parent",
+    "RPARENT_GOD_PARENT": "Godparent",
+    "RPARENT_FOSTER_PARENT": "Foster parent",
+    "RCHILD_ADOPTION": "Adopted child",
+    "RCHILD_RECOGNITION": "Recognized child",
+    "RCHILD_CANDIDATE_PARENT": "Candidate child",
+    "RCHILD_GOD_PARENT": "Godchild",
+    "RCHILD_FOSTER_PARENT": "Foster child",
 }
 
 
@@ -257,6 +277,46 @@ def _witnesses_from(raw_witnesses: list[dict]) -> list[Witness]:
     return witnesses
 
 
+def _relations_from(raw_relations: list[dict]) -> list[Witness]:
+    """`RelationPerson`-shaped dicts (Person.rparents + Person.related) ->
+    `Witness` models (see that dataclass's docstring for why). Same privacy
+    rule as everywhere else. `RelationPerson` has no note field, unlike
+    `WitnessEvent`."""
+    relations = []
+    for r in raw_relations:
+        person = r.get("person")
+        if not person or not is_publicly_visible(person):
+            continue
+        relations.append(
+            Witness(
+                person=person_key_from_summary(person),
+                role=RELATION_TYPE_LABEL.get(r.get("r_type")),
+            )
+        )
+    return relations
+
+
+def _alternate_names_from(person: dict) -> list[AlternateName]:
+    """Geneanet's various alternate-name fields -> GEDCOM alternate NAME
+    records. `aliases`/`public_name` are single free-text strings that may
+    combine given+surname in a way this project can't reliably split, so
+    those are kept unslashed (`surname=None`); `firstname_aliases`/
+    `surname_aliases` vary only one component, so the other comes from the
+    person's own primary name and can be slashed normally."""
+    lastname = _text(person.get("lastname", ""))
+    firstname = _text(person.get("firstname", ""))
+    names = []
+    for alias in person.get("aliases", []):
+        names.append(AlternateName(given=_text(alias)))
+    if person.get("public_name"):
+        names.append(AlternateName(given=_text(person["public_name"])))
+    for alias in person.get("firstname_aliases", []):
+        names.append(AlternateName(given=_text(alias), surname=lastname))
+    for alias in person.get("surname_aliases", []):
+        names.append(AlternateName(given=firstname, surname=_text(alias)))
+    return names
+
+
 def individual_from_person(
     person: dict, username: str
 ) -> tuple[Individual, list[Family], set[tuple[PersonKey, int]]]:
@@ -277,6 +337,10 @@ def individual_from_person(
         sex=_SEX_MAP.get(person.get("sex", "UNKNOWN"), "U"),
         occupation=_text(person.get("occupation")),
         source_url=citation_url,
+        nickname=", ".join(_text(q) for q in person.get("qualifiers", [])) or None,
+        titles=[_text(t) for t in person.get("titles", [])],
+        names=_alternate_names_from(person),
+        associations=_relations_from(person.get("rparents", []) + person.get("related", [])),
     )
     if person.get("image"):
         individual.media.append(Media(url=person["image"]))

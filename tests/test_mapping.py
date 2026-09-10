@@ -7,6 +7,7 @@ from exportgeneanet.mapping import (
     person_citation_url,
     person_ref_from_graph_node,
 )
+from exportgeneanet.models import AlternateName
 
 USERNAME = "yann64"
 
@@ -430,3 +431,64 @@ def test_individual_from_person_event_without_src_still_gets_geneanet_source():
     (birth,) = individual.events
     assert len(birth.sources) == 1
     assert birth.sources[0].is_geneanet_source
+
+
+def test_individual_from_person_maps_nickname_from_qualifiers():
+    person = _base_person(qualifiers=["Cyr"])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.nickname == "Cyr"
+
+
+def test_individual_from_person_joins_multiple_qualifiers():
+    person = _base_person(qualifiers=["Cyr", "Le Grand"])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.nickname == "Cyr, Le Grand"
+
+
+def test_individual_from_person_maps_titles():
+    person = _base_person(titles=["Comte de Something"])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.titles == ["Comte de Something"]
+
+
+def test_individual_from_person_maps_aliases_unslashed():
+    person = _base_person(aliases=["Marguerite Chauzy"])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.names == [AlternateName(given="Marguerite Chauzy", surname=None)]
+
+
+def test_individual_from_person_maps_public_name_unslashed():
+    person = _base_person(public_name="Some Public Name")
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.names == [AlternateName(given="Some Public Name", surname=None)]
+
+
+def test_individual_from_person_maps_firstname_and_surname_aliases_slashed():
+    person = _base_person(firstname_aliases=["Bobby"], surname_aliases=["Dupond"])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert AlternateName(given="Bobby", surname="Dupont") in individual.names
+    assert AlternateName(given="Jean", surname="Dupond") in individual.names
+
+
+def test_individual_from_person_maps_rparents_godparent():
+    godparent = _simple_person(index=13, p="marie", n="godmother", sex="FEMALE")
+    person = _base_person(rparents=[{"r_type": "RPARENT_GOD_PARENT", "person": godparent}])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert len(individual.associations) == 1
+    assoc = individual.associations[0]
+    assert assoc.person == PersonKey(p="marie", n="godmother", oc=0)
+    assert assoc.role == "Godparent"
+
+
+def test_individual_from_person_maps_related_godchild():
+    godchild = _simple_person(index=14, p="paul", n="godchild")
+    person = _base_person(related=[{"r_type": "RCHILD_GOD_PARENT", "person": godchild}])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.associations[0].role == "Godchild"
+
+
+def test_individual_from_person_excludes_hidden_rparent():
+    hidden = _simple_person(index=13, p="x", n="x", name_is_hidden=True)
+    person = _base_person(rparents=[{"r_type": "RPARENT_GOD_PARENT", "person": hidden}])
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert individual.associations == []

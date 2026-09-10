@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from exportgeneanet.identifiers import PersonKey
-from exportgeneanet.models import Event, Family, Individual, Note, Place, SourceCitation, Witness
+from exportgeneanet.models import AlternateName, Event, Family, Individual, Note, Place, SourceCitation, Witness
 from exportgeneanet.tree_crawler import CrawlState
 
 
@@ -87,3 +87,31 @@ def test_crawl_state_roundtrip_preserves_type_sources_witnesses_and_divorce(tmp_
     loaded_family = loaded.families["fam1"]
     assert loaded_family.divorce.tag == "DIV"
     assert loaded_family.sources[0].title == "Family source"
+
+
+def test_crawl_state_roundtrip_preserves_nickname_titles_names_and_associations(tmp_path: Path):
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    godparent_key = PersonKey(p="marie", n="martin", oc=0)
+
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        nickname="Cyr",
+        titles=["Comte de Something"],
+        names=[AlternateName(given="Marguerite Chauzy", surname=None)],
+        associations=[Witness(person=godparent_key, role="Godparent")],
+    )
+
+    state = CrawlState(visited={str(key)}, individuals={str(key): individual})
+
+    path = tmp_path / "state.json"
+    state.save(path)
+    loaded = CrawlState.load(path)
+
+    loaded_individual = loaded.individuals[str(key)]
+    assert loaded_individual.nickname == "Cyr"
+    assert loaded_individual.titles == ["Comte de Something"]
+    assert loaded_individual.names == [AlternateName(given="Marguerite Chauzy", surname=None)]
+    assert loaded_individual.associations[0].person == godparent_key
+    assert loaded_individual.associations[0].role == "Godparent"

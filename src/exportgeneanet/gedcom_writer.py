@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import GENEANET_REPOSITORY_NAME, GENEANET_REPOSITORY_WWW
-from .models import Event, Family, Individual, Note, SourceCitation
+from .models import Event, Family, Individual, Note, SourceCitation, Witness
 
 _MAX_LINE_CHARS = 200  # conservative CONC threshold; GEDCOM 5.5.1 caps at 255
 _GENEANET_REPOSITORY_ID = "R1"
@@ -102,19 +102,32 @@ def _write_event(
     if event.note and include_notes:
         g.add_text(level + 1, "NOTE", event.note.text)
     _write_sources(g, level + 1, event.sources, source_ids)
-    for witness in event.witnesses:
-        # Only link a witness who is actually part of this export — never
-        # fabricate an INDI record just because someone was mentioned as a
-        # witness (that would silently expand the requested export scope).
-        witness_individual = individuals.get(str(witness.person))
-        if witness_individual is None:
+    _write_associations(g, level + 1, event.witnesses, individuals, include_notes)
+
+
+def _write_associations(
+    g: GedcomLines,
+    level: int,
+    associations: list[Witness],
+    individuals: dict[str, Individual],
+    include_notes: bool = True,
+) -> None:
+    """Shared by event witnesses and `Individual.associations` (godparent/
+    adoptive/etc. relations) — both are a GEDCOM ASSO/RELA structure, just
+    attached at different levels."""
+    for assoc in associations:
+        # Only link a person who is actually part of this export — never
+        # fabricate an INDI record just because someone was referenced as a
+        # witness/relation (that would silently expand the export scope).
+        assoc_individual = individuals.get(str(assoc.person))
+        if assoc_individual is None:
             continue
-        g.add(level + 1, "ASSO", f"@{witness_individual.gedcom_id}@")
-        g.add(level + 2, "TYPE", "INDI")
-        if witness.role:
-            g.add(level + 2, "RELA", witness.role)
-        if witness.note and include_notes:
-            g.add_text(level + 2, "NOTE", witness.note)
+        g.add(level, "ASSO", f"@{assoc_individual.gedcom_id}@")
+        g.add(level + 1, "TYPE", "INDI")
+        if assoc.role:
+            g.add(level + 1, "RELA", assoc.role)
+        if assoc.note and include_notes:
+            g.add_text(level + 1, "NOTE", assoc.note)
 
 
 def _write_notes(g: GedcomLines, level: int, notes: list[Note]) -> None:
@@ -163,8 +176,17 @@ def generate_gedcom(
         g.add(1, "NAME", f"{individual.given_name} /{individual.surname}/")
         g.add(2, "GIVN", individual.given_name)
         g.add(2, "SURN", individual.surname)
+        if individual.nickname:
+            g.add(2, "NICK", individual.nickname)
         if individual.sex in ("M", "F"):
             g.add(1, "SEX", individual.sex)
+
+        for alt_name in individual.names:
+            if alt_name.surname is not None:
+                g.add(1, "NAME", f"{alt_name.given} /{alt_name.surname}/")
+            else:
+                g.add(1, "NAME", alt_name.given)
+            g.add(2, "TYPE", alt_name.type)
 
         for event in individual.events:
             _write_event(g, 1, event, individuals, source_ids, include_notes)
@@ -172,10 +194,15 @@ def generate_gedcom(
         if individual.occupation:
             g.add(1, "OCCU", individual.occupation)
 
+        for title in individual.titles:
+            g.add(1, "TITL", title)
+
         if include_notes:
             _write_notes(g, 1, individual.notes)
 
         _write_sources(g, 1, individual.sources, source_ids)
+
+        _write_associations(g, 1, individual.associations, individuals, include_notes)
 
         if include_media:
             for media in individual.media:

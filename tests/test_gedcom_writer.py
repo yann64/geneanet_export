@@ -1,5 +1,5 @@
 from exportgeneanet.gedcom_writer import generate_gedcom
-from exportgeneanet.models import Event, Family, Individual, Note, Place, SourceCitation, Witness
+from exportgeneanet.models import AlternateName, Event, Family, Individual, Note, Place, SourceCitation, Witness
 from exportgeneanet.identifiers import PersonKey
 
 
@@ -221,3 +221,56 @@ def test_generate_gedcom_excludes_event_notes_and_witness_notes_when_disabled():
     )
     assert "event note" not in gedcom
     assert "witness note" not in gedcom
+
+
+def test_generate_gedcom_nickname_and_titles():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        nickname="Cyr",
+        titles=["Comte de Something"],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+    assert "2 NICK Cyr" in lines
+    name_idx = lines.index("1 NAME Jean /Dupont/")
+    assert lines[name_idx + 1 : name_idx + 4] == ["2 GIVN Jean", "2 SURN Dupont", "2 NICK Cyr"]
+    assert "1 TITL Comte de Something" in gedcom
+
+
+def test_generate_gedcom_alternate_names():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        names=[
+            AlternateName(given="Marguerite Chauzy", surname=None),
+            AlternateName(given="Bobby", surname="Dupont"),
+        ],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+    unslashed_idx = lines.index("1 NAME Marguerite Chauzy")
+    assert lines[unslashed_idx + 1] == "2 TYPE aka"
+    slashed_idx = lines.index("1 NAME Bobby /Dupont/")
+    assert lines[slashed_idx + 1] == "2 TYPE aka"
+
+
+def test_generate_gedcom_individual_level_association():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    godparent_key = PersonKey(p="marie", n="martin", oc=0)
+    godparent = Individual(key=godparent_key, given_name="Marie", surname="Martin")
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        associations=[Witness(person=godparent_key, role="Godparent")],
+    )
+    gedcom = generate_gedcom({str(key): individual, str(godparent_key): godparent}, {})
+    lines = gedcom.splitlines()
+    asso_idx = lines.index(f"1 ASSO @{godparent.gedcom_id}@")
+    assert lines[asso_idx + 1] == "2 TYPE INDI"
+    assert lines[asso_idx + 2] == "2 RELA Godparent"

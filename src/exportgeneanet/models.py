@@ -35,9 +35,26 @@ class Media:
 
 @dataclass
 class Witness:
+    """A person + their role, attached either to an `Event` (a witness) or
+    directly to an `Individual` (a godparent/adoptive/foster relation, etc.
+    — see `Individual.associations`) — both become a GEDCOM ASSO/RELA
+    structure, just at different levels, so this one shape covers both."""
+
     person: PersonKey
     role: str | None = None  # e.g. "Godparent", "Civil officer"
     note: str | None = None
+
+
+@dataclass
+class AlternateName:
+    """A GEDCOM alternate NAME record (`Individual.names`). `surname=None`
+    means Geneanet gave a single free-text alias it can't be reliably split
+    into given/surname (e.g. "Marguerite Chauzy" could be a multi-word
+    surname) — emitted unslashed rather than risk a wrong split."""
+
+    given: str
+    surname: str | None = None
+    type: str = "aka"  # GEDCOM NAME_TYPE: aka/birth/immigrant/maiden/married/...
 
 
 @dataclass
@@ -95,6 +112,13 @@ class Individual:
     source_url: str | None = None
     # General (not fact-specific) source citations, e.g. Geneanet's `psources`.
     sources: list[SourceCitation] = field(default_factory=list)
+    nickname: str | None = None  # Geneanet's `qualifiers` ("sobriquet")
+    titles: list[str] = field(default_factory=list)  # e.g. nobility titles
+    names: list[AlternateName] = field(default_factory=list)
+    # Godparent/adoptive/foster/etc. relations (Geneanet's `rparents` +
+    # `related`) — privacy-checked like any other person reference; see
+    # `Witness`'s docstring for why this reuses that type.
+    associations: list[Witness] = field(default_factory=list)
 
     @property
     def gedcom_id(self) -> str:

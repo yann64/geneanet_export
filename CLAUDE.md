@@ -148,6 +148,25 @@ Everything lives in `src/exportgeneanet/`:
   real tree checked so far and its semantics are unconfirmed, so it's
   folded into the event's `NOTE` as labeled text ("Reason: ...") instead of
   being asserted as a specific (possibly wrong) GEDCOM tag like `CAUS`.
+
+  `Person.rparents`/`Person.related` (godparent/adoptive/foster/recognized
+  relations — `RELATION_TYPE_LABEL`) map through `_relations_from` into
+  `Individual.associations`, reusing the same `Witness` shape and the same
+  "`gedcom_writer.py` only links an `ASSO` if the person is actually in the
+  export" rule (`_write_associations` is shared by both). Confirmed real
+  (`RPARENT_GOD_PARENT`) in `jpmanzinali`'s tree, including a masked
+  godparent correctly dropped by the privacy check. `Person.qualifiers`
+  (confirmed real, e.g. "Cyr") join into `Individual.nickname`; `titles`
+  (nobility, schema-confirmed only) become `Individual.titles` (`TITL`).
+  `aliases`/`public_name`/`firstname_aliases`/`surname_aliases` become
+  alternate `AlternateName`s on `Individual.names` (GEDCOM alternate `NAME`
+  records, `TYPE aka`) — `aliases`/`public_name` are single free-text
+  strings Geneanet doesn't split into given/surname (confirmed real, e.g.
+  "Marguerite Chauzy"), so `AlternateName.surname` stays `None` and
+  `gedcom_writer.py` emits them unslashed rather than risk a wrong split;
+  `firstname_aliases`/`surname_aliases` vary only one component, so the
+  other comes from the person's own primary name and can be slashed
+  normally.
 - **`models.py`** — plain dataclasses mirroring GEDCOM concepts (`Individual`,
   `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic. Keeps
   `gedcom_writer.py` a thin serializer instead of a second place that
