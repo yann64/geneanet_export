@@ -25,13 +25,11 @@ class PersonKey:
         return f"{self.p}.{self.n}.{self.oc}"
 
     @staticmethod
-    def parse(text: str) -> "PersonKey":
+    def parse(text: str) -> PersonKey:
         """Parse the `--individual` CLI value, formatted as `given.surname.oc`."""
         parts = text.split(".")
         if len(parts) < 2:
-            raise ValueError(
-                f"invalid person key {text!r}, expected 'given.surname[.oc]'"
-            )
+            raise ValueError(f"invalid person key {text!r}, expected 'given.surname[.oc]'")
         if len(parts) >= 3 and parts[-1].isdigit():
             oc = int(parts[-1])
             name_parts = parts[:-1]

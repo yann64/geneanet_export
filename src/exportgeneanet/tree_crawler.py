@@ -56,7 +56,7 @@ class CrawlState:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
-    def load(path: Path) -> "CrawlState":
+    def load(path: Path) -> CrawlState:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return CrawlState(
             visited=set(payload["visited"]),

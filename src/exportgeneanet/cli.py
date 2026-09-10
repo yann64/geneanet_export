@@ -29,8 +29,7 @@ def _individual_option(help_extra: str = "") -> str:
     return typer.Option(
         ...,
         help="A known individual in the tree, as 'given.surname[.oc]' (oc is "
-        "GeneWeb's occurrence number disambiguating same-name people, default 0). "
-        + help_extra,
+        "GeneWeb's occurrence number disambiguating same-name people, default 0). " + help_extra,
     )
 
 
@@ -68,9 +67,7 @@ def export(
     lang: str = typer.Option(DEFAULT_LANG),
     min_delay: float = typer.Option(DEFAULT_MIN_DELAY_SECONDS),
     max_delay: float = typer.Option(DEFAULT_MAX_DELAY_SECONDS),
-    nb_asc: int = typer.Option(
-        20, help="--scope ascendants only: how many generations up to fetch."
-    ),
+    nb_asc: int = typer.Option(20, help="--scope ascendants only: how many generations up to fetch."),
     include_notes: bool = typer.Option(True),
     include_media: bool = typer.Option(True),
     resume: bool = typer.Option(False, help="Resume from a previous interrupted run's checkpoint."),

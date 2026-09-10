@@ -1,6 +1,15 @@
 from exportgeneanet.gedcom_writer import generate_gedcom
-from exportgeneanet.models import AlternateName, Event, Family, Individual, Note, Place, SourceCitation, Witness
 from exportgeneanet.identifiers import PersonKey
+from exportgeneanet.models import (
+    AlternateName,
+    Event,
+    Family,
+    Individual,
+    Note,
+    Place,
+    SourceCitation,
+    Witness,
+)
 
 
 def _sample_data():

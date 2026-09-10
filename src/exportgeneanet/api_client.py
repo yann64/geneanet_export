@@ -47,10 +47,7 @@ class GeneanetApiClient:
     def _call(self, arbre: str, params: Message, response_cls: type[Message]) -> Message:
         self.rate_limiter.wait()
         body = json.dumps({"data": quote(params.SerializeToString())})
-        url = (
-            f"{API_BASE_URL}/?arbre={arbre}&sourcename={self.tree}"
-            f"&lang={self.lang}&type="
-        )
+        url = f"{API_BASE_URL}/?arbre={arbre}&sourcename={self.tree}&lang={self.lang}&type="
         response = self.session.post(url, data=body, headers=_HEADERS, timeout=15)
         response.raise_for_status()
         result = response_cls()

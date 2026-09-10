@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "grpcio-tools>=1.60",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -26,3 +27,27 @@ exportgeneanet = "exportgeneanet.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["src/exportgeneanet/proto"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["exportgeneanet"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer's API requires calling typer.Option()/typer.Argument() as argument
+# defaults — that's the framework's intended pattern, not a bug.
+"src/exportgeneanet/cli.py" = ["B008"]

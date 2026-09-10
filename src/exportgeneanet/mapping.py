@@ -113,7 +113,7 @@ RELATION_TYPE_LABEL = {
 
 
 def _label_from_enum(value: str) -> str:
-    """"NO_SEXES_CHECK_NOT_MARRIED" -> "No sexes check not married"."""
+    """ "NO_SEXES_CHECK_NOT_MARRIED" -> "No sexes check not married"."""
     return value.replace("_", " ").capitalize()
 
 
@@ -131,8 +131,19 @@ _DATE_PART_RE = re.compile(r"^(?P<prefix>[?~<>]?)/?(?P<year>-?\d+)/(?P<month>\d+
 _PRECISION_TO_QUALIFIER = {"?": "EST", "~": "ABT", "<": "BEF", ">": "AFT"}
 
 _MONTH_ABBR = [
-    None, "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    None,
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
 ]
 
 # GEDCOM calendar escapes for calendars where date_raw's Y/M/D numbers are

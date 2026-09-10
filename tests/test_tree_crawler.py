@@ -1,7 +1,16 @@
 from pathlib import Path
 
 from exportgeneanet.identifiers import PersonKey
-from exportgeneanet.models import AlternateName, Event, Family, Individual, Note, Place, SourceCitation, Witness
+from exportgeneanet.models import (
+    AlternateName,
+    Event,
+    Family,
+    Individual,
+    Note,
+    Place,
+    SourceCitation,
+    Witness,
+)
 from exportgeneanet.tree_crawler import CrawlState
 
 

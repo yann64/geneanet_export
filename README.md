@@ -99,6 +99,8 @@ practice.
 ```bash
 pip install -e ".[dev]"
 pytest
+ruff check .    # lint
+ruff format .   # format
 ```
 
 Tests in `tests/` cover the GEDCOM writer, protobuf-response mapping,

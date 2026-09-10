@@ -21,6 +21,9 @@ pip install -e ".[dev]"
 pytest                            # full test suite (no network)
 pytest tests/test_mapping.py::test_individual_from_person_maps_events_and_relations  # single test
 
+ruff check .                      # lint
+ruff format .                     # format (run before committing)
+
 exportgeneanet list --username yann64 --individual "etienne.barbel.0"
 exportgeneanet export --username yann64 --scope all --individual "etienne.barbel.0" -o yann64.ged
 exportgeneanet export --username yann64 --scope ascendants --individual "etienne.barbel.0" -o out.ged
@@ -28,7 +31,12 @@ exportgeneanet export --username yann64 --scope ascendants --individual "etienne
 python scripts/generate_proto.py   # regenerate src/exportgeneanet/proto/, only if Geneanet's API schema changes
 ```
 
-There is no lint/format tooling configured yet.
+Ruff (lint + format) is configured in `pyproject.toml` — `[tool.ruff]`/
+`[tool.ruff.lint]`. `src/exportgeneanet/proto/` (generated code) is excluded
+from both. `cli.py` has a per-file lint ignore for `B008`
+("function call in argument default"): Typer's API requires calling
+`typer.Option()`/`typer.Argument()` as argument defaults, so that's the
+framework's intended pattern there, not a bug.
 
 ## Critical constraint: how data is fetched
 

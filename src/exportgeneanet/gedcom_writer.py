@@ -29,7 +29,9 @@ class GedcomLines:
         paragraphs = text.split("\n")
         first = True
         for paragraph in paragraphs:
-            chunks = [paragraph[i : i + _MAX_LINE_CHARS] for i in range(0, len(paragraph), _MAX_LINE_CHARS)] or [""]
+            chunks = [
+                paragraph[i : i + _MAX_LINE_CHARS] for i in range(0, len(paragraph), _MAX_LINE_CHARS)
+            ] or [""]
             for j, chunk in enumerate(chunks):
                 if first:
                     self.add(level, tag, chunk)
@@ -219,7 +221,7 @@ def generate_gedcom(
             if fam:
                 g.add(1, "FAMS", f"@{fam.gedcom_id}@")
 
-    for fam_key, fam in families.items():
+    for fam in families.values():
         g.add(0, f"@{fam.gedcom_id}@", "FAM")
         if fam.husband and str(fam.husband) in individuals:
             g.add(1, "HUSB", f"@{individuals[str(fam.husband)].gedcom_id}@")
@@ -258,7 +260,5 @@ def write_gedcom_file(
     include_notes: bool = True,
     include_media: bool = True,
 ) -> None:
-    content = generate_gedcom(
-        individuals, families, include_notes=include_notes, include_media=include_media
-    )
+    content = generate_gedcom(individuals, families, include_notes=include_notes, include_media=include_media)
     path.write_text(content, encoding="utf-8")

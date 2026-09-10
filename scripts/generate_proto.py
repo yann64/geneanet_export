@@ -28,8 +28,7 @@ from urllib.request import Request, urlopen
 PROTO_BASE_URL = "https://gw.geneanet.org/setup/api"
 PROTO_NAMES = ["api", "api_app", "api_stats", "api_saisie_read", "api_saisie_write"]
 USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 )
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "src" / "exportgeneanet" / "proto"
 

@@ -77,14 +77,10 @@ def test_individual_from_person_maps_events_and_relations():
             ]
         },
         "father": _simple_person(index=11, p="guillaume", n="barbel", firstname="Guillaume"),
-        "mother": _simple_person(
-            index=12, p="marguerite", n="guiraud", firstname="Marguerite", sex="FEMALE"
-        ),
+        "mother": _simple_person(index=12, p="marguerite", n="guiraud", firstname="Marguerite", sex="FEMALE"),
         "families": [
             {
-                "spouse": _simple_person(
-                    index=8, p="marie", n="chauvin", firstname="Marie", sex="FEMALE"
-                ),
+                "spouse": _simple_person(index=8, p="marie", n="chauvin", firstname="Marie", sex="FEMALE"),
                 "marriage_date": "10 Feb 1906",
                 "marriage_place": "Béziers",
                 "children": [
@@ -167,10 +163,7 @@ def test_gedcom_date_after():
 
 
 def test_gedcom_date_between_range():
-    assert (
-        gedcom_date("/1652/0/0#../1654/0/0", "GREGORIAN", "between 1652 and 1654")
-        == "BET 1652 AND 1654"
-    )
+    assert gedcom_date("/1652/0/0#../1654/0/0", "GREGORIAN", "between 1652 and 1654") == "BET 1652 AND 1654"
 
 
 def test_gedcom_date_julian_uses_calendar_escape():
@@ -268,7 +261,11 @@ def test_individual_from_person_event_witnesses_filters_privacy():
                     "type": "EPERS_BIRTH",
                     "name": "birth",
                     "witnesses": [
-                        {"witness_type": "WITNESS_GODPARENT", "witness": visible_witness, "witness_note": "note"},
+                        {
+                            "witness_type": "WITNESS_GODPARENT",
+                            "witness": visible_witness,
+                            "witness_note": "note",
+                        },
                         {"witness_type": "WITNESS", "witness": hidden_witness},
                     ],
                 }
