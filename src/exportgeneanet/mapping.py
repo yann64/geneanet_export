@@ -216,13 +216,26 @@ def _text(value: str | None) -> str | None:
 
 
 def is_publicly_visible(person_ref: dict) -> bool:
-    """True unless Geneanet's own flags say this person shouldn't be shown."""
+    """True unless Geneanet's own flags say this person shouldn't be shown.
+
+    `visible_for_visitors` is a 3-way `Visibility` enum, not a boolean:
+    `VISIBILITY_PUBLIC` (typically deceased people, full detail incl. dates),
+    `VISIBILITY_SEMI_PUBLIC` (typically living/`is_contemporary` people —
+    Geneanet already omits their exact dates at the API level, but their
+    name is shown, same as `name_is_hidden`/`name_is_restricted` say), and
+    `VISIBILITY_PRIVATE` (nothing shown). Confirmed empirically across
+    several real trees: every `is_contemporary` person sampled was
+    SEMI_PUBLIC with `name_is_hidden`/`name_is_restricted` both false —
+    treating SEMI_PUBLIC as invisible (an earlier bug here) incorrectly
+    dropped every living relative from the export, since real trees are
+    mostly living people in their recent generations.
+    """
     if person_ref.get("nameIsHidden") or person_ref.get("nameIsRestricted"):
         return False
     if person_ref.get("name_is_hidden") or person_ref.get("name_is_restricted"):
         return False
     visibility = person_ref.get("visible_for_visitors") or person_ref.get("visibleForVisitors")
-    if visibility is not None and visibility != "VISIBILITY_PUBLIC":
+    if visibility == "VISIBILITY_PRIVATE":
         return False
     return True
 

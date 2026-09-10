@@ -49,6 +49,14 @@ def test_is_publicly_visible_false_when_not_public_visibility():
     assert not is_publicly_visible(_simple_person(visible_for_visitors="VISIBILITY_PRIVATE"))
 
 
+def test_is_publicly_visible_true_for_semi_public():
+    # SEMI_PUBLIC is Geneanet's normal state for living/contemporary people
+    # whose name is shown but whose dates are already omitted by the API —
+    # not a privacy flag that should hide them entirely (see
+    # is_publicly_visible's docstring).
+    assert is_publicly_visible(_simple_person(visible_for_visitors="VISIBILITY_SEMI_PUBLIC"))
+
+
 def test_person_ref_from_graph_node_skips_hidden():
     assert person_ref_from_graph_node(_simple_person(name_is_hidden=True)) is None
 
