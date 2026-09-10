@@ -279,6 +279,29 @@ Everything lives in `src/exportgeneanet/`:
   absolute import instead of being frozen directly, so don't point
   PyInstaller at `gui/app.py` itself.
 
+  Builds from `packaging/exportgeneanet-gui.spec`, not plain CLI flags —
+  it excludes `libglib-2.0`/`libgio-2.0`/`libgobject-2.0`/`libgmodule-2.0`/
+  `libgthread-2.0` from the bundle. Confirmed root cause of a real
+  segfault report (v0.1.0, reproduced in this sandbox under a real X11
+  display, not just `QT_QPA_PLATFORM=offscreen` — offscreen never
+  triggers this): the PySide6 wheel vendors its own (older) glib, which a
+  onefile build's extraction dir puts first on the library search path;
+  when anything later `dlopen()`s a *system* GIO module (confirmed real:
+  GVFS's D-Bus module, loaded simply by running a real desktop session),
+  that module resolves symbols against the bundled older glib instead of
+  the system one it was built against — here, a missing
+  `g_variant_builder_init_static` (added in GLib 2.70). glib guarantees
+  strict ABI backward compatibility and is a near-universal base
+  dependency on Linux desktops, so excluding the bundled copy and
+  falling back to the system's own is safe (and is what a normal,
+  non-frozen Qt app already does). If touching the PyInstaller build
+  config, keep this exclusion — verify by extracting the onefile archive
+  (run it, then check `/tmp/_MEI*` while it's alive — clean up any stale
+  `_MEI*` dirs from a previous killed run first, since onefile skips its
+  exit cleanup on a hard kill and a stale dir will shadow the fresh one
+  in a naive `ls -d /tmp/_MEI* | head -1`) and confirming those libraries
+  are absent.
+
 ### Data flow for `export`
 
 `cli.export` → `tree_crawler.crawl_full` or `crawl_ascendants` (driving

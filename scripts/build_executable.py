@@ -2,9 +2,10 @@
 """Build a standalone exportgeneanet-gui executable with PyInstaller.
 
 Single source of truth for the PyInstaller invocation so local builds and
-the release workflow (.github/workflows/release.yml) can't drift apart —
-no separate .spec file to keep in sync, since there are no extra data
-files/icon to justify one.
+the release workflow (.github/workflows/release.yml) can't drift apart.
+Builds from packaging/exportgeneanet-gui.spec rather than plain CLI flags —
+that file excludes a few bundled shared libraries that conflict with the
+host's own (see the comment there), which CLI flags alone can't express.
 
     pip install -e ".[gui,build]"
     python scripts/build_executable.py
@@ -18,16 +19,7 @@ from pathlib import Path
 
 import PyInstaller.__main__
 
-ENTRY_POINT = Path(__file__).resolve().parent.parent / "packaging" / "run_gui.py"
+SPEC_FILE = Path(__file__).resolve().parent.parent / "packaging" / "exportgeneanet-gui.spec"
 
 if __name__ == "__main__":
-    PyInstaller.__main__.run(
-        [
-            str(ENTRY_POINT),
-            "--name",
-            "exportgeneanet-gui",
-            "--onefile",
-            "--windowed",
-            "--noconfirm",
-        ]
-    )
+    PyInstaller.__main__.run([str(SPEC_FILE), "--noconfirm"])

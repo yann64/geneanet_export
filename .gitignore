@@ -5,7 +5,9 @@ venv/
 *.egg-info/
 build/
 dist/
-*.spec
+# PyInstaller auto-generates a stray root-level .spec if invoked without
+# one; packaging/exportgeneanet-gui.spec is deliberate and committed.
+/*.spec
 .pytest_cache/
 
 # Runtime state, not source
