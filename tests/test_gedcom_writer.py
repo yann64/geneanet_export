@@ -50,6 +50,20 @@ def test_generate_gedcom_has_head_and_trailer():
     assert gedcom.rstrip("\n").endswith("0 TRLR")
 
 
+def test_generate_gedcom_uses_sequential_numeric_ids_not_names():
+    individuals, families = _sample_data()
+    gedcom = generate_gedcom(individuals, families)
+    # father, mother, child inserted in that order -> I1, I2, I3.
+    assert "0 @I1@ INDI" in gedcom
+    assert "1 NAME Pierre /Dupont/" in gedcom.splitlines()[gedcom.splitlines().index("0 @I1@ INDI") + 1]
+    assert "0 @I2@ INDI" in gedcom
+    assert "0 @I3@ INDI" in gedcom
+    assert "0 @F1@ FAM" in gedcom
+    # No name-derived id (old scheme) anywhere in the output.
+    assert "DUPONT" not in gedcom
+    assert "@IPIERRE" not in gedcom
+
+
 def test_generate_gedcom_individual_record():
     individuals, families = _sample_data()
     gedcom = generate_gedcom(individuals, families)
@@ -201,7 +215,8 @@ def test_generate_gedcom_witness_asso_only_when_witness_in_export():
         ],
     )
     gedcom = generate_gedcom({str(key): individual, str(witness_key): witness_individual}, {})
-    assert f"2 ASSO @{witness_individual.gedcom_id}@" in gedcom
+    # Sequential ids in dict-insertion order: individual -> I1, witness -> I2.
+    assert "2 ASSO @I2@" in gedcom
     assert "3 RELA Godparent" in gedcom
     # The unexported witness must not produce a dangling pointer or a
     # fabricated INDI record.
@@ -280,6 +295,7 @@ def test_generate_gedcom_individual_level_association():
     )
     gedcom = generate_gedcom({str(key): individual, str(godparent_key): godparent}, {})
     lines = gedcom.splitlines()
-    asso_idx = lines.index(f"1 ASSO @{godparent.gedcom_id}@")
+    # Sequential ids in dict-insertion order: individual -> I1, godparent -> I2.
+    asso_idx = lines.index("1 ASSO @I2@")
     assert lines[asso_idx + 1] == "2 TYPE INDI"
     assert lines[asso_idx + 2] == "2 RELA Godparent"

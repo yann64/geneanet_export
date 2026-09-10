@@ -6,15 +6,9 @@ a thin serializer rather than a second place that understands genealogy.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from .identifiers import PersonKey
-
-
-def _sanitize_id(text: str) -> str:
-    """Keep GEDCOM pointers (@...@) safe: ASCII letters/digits/underscore only."""
-    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper()
 
 
 @dataclass
@@ -120,10 +114,6 @@ class Individual:
     # `Witness`'s docstring for why this reuses that type.
     associations: list[Witness] = field(default_factory=list)
 
-    @property
-    def gedcom_id(self) -> str:
-        return "I" + _sanitize_id(f"{self.key.p}_{self.key.n}_{self.key.oc}")
-
 
 @dataclass
 class Family:
@@ -136,7 +126,3 @@ class Family:
     notes: list[Note] = field(default_factory=list)
     # General (not fact-specific) source citations, e.g. Geneanet's `fsources`.
     sources: list[SourceCitation] = field(default_factory=list)
-
-    @property
-    def gedcom_id(self) -> str:
-        return "F" + _sanitize_id(self.key)

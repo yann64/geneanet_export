@@ -6,6 +6,7 @@ and we want exact control over which tags get emitted from our own models.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from .config import GENEANET_REPOSITORY_NAME, GENEANET_REPOSITORY_WWW
@@ -43,6 +44,15 @@ class GedcomLines:
 
     def render(self) -> str:
         return "\n".join(self._lines) + "\n"
+
+
+def _number_ids(keys: Iterable[str], prefix: str) -> dict[str, str]:
+    """Assign sequential GEDCOM pointer ids (`I1`, `I2`, ... / `F1`, `F2`,
+    ...) in iteration order — plain sequential numbers rather than ids
+    derived from the person's/family's name, matching normal GEDCOM
+    convention (and avoiding very long or illegible pointers for long
+    names/non-Latin scripts)."""
+    return {key: f"{prefix}{i}" for i, key in enumerate(keys, start=1)}
 
 
 def _collect_source_ids(
@@ -91,6 +101,7 @@ def _write_event(
     level: int,
     event: Event,
     individuals: dict[str, Individual],
+    individual_ids: dict[str, str],
     source_ids: dict[str, str],
     include_notes: bool = True,
 ) -> None:
@@ -104,7 +115,7 @@ def _write_event(
     if event.note and include_notes:
         g.add_text(level + 1, "NOTE", event.note.text)
     _write_sources(g, level + 1, event.sources, source_ids)
-    _write_associations(g, level + 1, event.witnesses, individuals, include_notes)
+    _write_associations(g, level + 1, event.witnesses, individuals, individual_ids, include_notes)
 
 
 def _write_associations(
@@ -112,6 +123,7 @@ def _write_associations(
     level: int,
     associations: list[Witness],
     individuals: dict[str, Individual],
+    individual_ids: dict[str, str],
     include_notes: bool = True,
 ) -> None:
     """Shared by event witnesses and `Individual.associations` (godparent/
@@ -121,10 +133,10 @@ def _write_associations(
         # Only link a person who is actually part of this export — never
         # fabricate an INDI record just because someone was referenced as a
         # witness/relation (that would silently expand the export scope).
-        assoc_individual = individuals.get(str(assoc.person))
-        if assoc_individual is None:
+        assoc_key = str(assoc.person)
+        if assoc_key not in individuals:
             continue
-        g.add(level, "ASSO", f"@{assoc_individual.gedcom_id}@")
+        g.add(level, "ASSO", f"@{individual_ids[assoc_key]}@")
         g.add(level + 1, "TYPE", "INDI")
         if assoc.role:
             g.add(level + 1, "RELA", assoc.role)
@@ -165,16 +177,18 @@ def generate_gedcom(
     g.add(1, "CHAR", "UTF-8")
 
     source_ids, geneanet_titles = _collect_source_ids(individuals, families)
+    individual_ids = _number_ids(individuals.keys(), "I")
+    family_ids = _number_ids(families.keys(), "F")
 
     # FAMC (family where the individual is a child) is derived from the
     # families' child lists, since Individual only stores father/mother keys.
     famc_by_person: dict[str, str] = {}
-    for fam in families.values():
+    for fam_key, fam in families.items():
         for child in fam.children:
-            famc_by_person[str(child)] = fam.gedcom_id
+            famc_by_person[str(child)] = family_ids[fam_key]
 
     for key, individual in individuals.items():
-        g.add(0, f"@{individual.gedcom_id}@", "INDI")
+        g.add(0, f"@{individual_ids[key]}@", "INDI")
         g.add(1, "NAME", f"{individual.given_name} /{individual.surname}/")
         g.add(2, "GIVN", individual.given_name)
         g.add(2, "SURN", individual.surname)
@@ -191,7 +205,7 @@ def generate_gedcom(
             g.add(2, "TYPE", alt_name.type)
 
         for event in individual.events:
-            _write_event(g, 1, event, individuals, source_ids, include_notes)
+            _write_event(g, 1, event, individuals, individual_ids, source_ids, include_notes)
 
         if individual.occupation:
             g.add(1, "OCCU", individual.occupation)
@@ -204,7 +218,7 @@ def generate_gedcom(
 
         _write_sources(g, 1, individual.sources, source_ids)
 
-        _write_associations(g, 1, individual.associations, individuals, include_notes)
+        _write_associations(g, 1, individual.associations, individuals, individual_ids, include_notes)
 
         if include_media:
             for media in individual.media:
@@ -217,23 +231,22 @@ def generate_gedcom(
         if famc:
             g.add(1, "FAMC", f"@{famc}@")
         for fam_key in individual.family_keys:
-            fam = families.get(fam_key)
-            if fam:
-                g.add(1, "FAMS", f"@{fam.gedcom_id}@")
+            if fam_key in families:
+                g.add(1, "FAMS", f"@{family_ids[fam_key]}@")
 
-    for fam in families.values():
-        g.add(0, f"@{fam.gedcom_id}@", "FAM")
+    for fam_key, fam in families.items():
+        g.add(0, f"@{family_ids[fam_key]}@", "FAM")
         if fam.husband and str(fam.husband) in individuals:
-            g.add(1, "HUSB", f"@{individuals[str(fam.husband)].gedcom_id}@")
+            g.add(1, "HUSB", f"@{individual_ids[str(fam.husband)]}@")
         if fam.wife and str(fam.wife) in individuals:
-            g.add(1, "WIFE", f"@{individuals[str(fam.wife)].gedcom_id}@")
+            g.add(1, "WIFE", f"@{individual_ids[str(fam.wife)]}@")
         for child in fam.children:
             if str(child) in individuals:
-                g.add(1, "CHIL", f"@{individuals[str(child)].gedcom_id}@")
+                g.add(1, "CHIL", f"@{individual_ids[str(child)]}@")
         if fam.marriage:
-            _write_event(g, 1, fam.marriage, individuals, source_ids, include_notes)
+            _write_event(g, 1, fam.marriage, individuals, individual_ids, source_ids, include_notes)
         if fam.divorce:
-            _write_event(g, 1, fam.divorce, individuals, source_ids, include_notes)
+            _write_event(g, 1, fam.divorce, individuals, individual_ids, source_ids, include_notes)
         if include_notes:
             _write_notes(g, 1, fam.notes)
         _write_sources(g, 1, fam.sources, source_ids)
