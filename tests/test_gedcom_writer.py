@@ -5,6 +5,7 @@ from exportgeneanet.models import (
     Event,
     Family,
     Individual,
+    Media,
     Note,
     Place,
     SourceCitation,
@@ -299,3 +300,53 @@ def test_generate_gedcom_individual_level_association():
     asso_idx = lines.index("1 ASSO @I2@")
     assert lines[asso_idx + 1] == "2 TYPE INDI"
     assert lines[asso_idx + 2] == "2 RELA Godparent"
+
+
+def test_generate_gedcom_media_is_a_standalone_obje_record_with_source():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        media=[
+            Media(
+                url="https://gw.geneanet.org/some/image.jpg",
+                title="Portrait",
+                sources=[
+                    SourceCitation(
+                        title="Geneanet — tree owner",
+                        page="https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=0",
+                        is_geneanet_source=True,
+                    )
+                ],
+            )
+        ],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+
+    # The INDI record only points at the media record, doesn't embed it.
+    assert "1 OBJE @O1@" in lines
+
+    obje_idx = lines.index("0 @O1@ OBJE")
+    assert lines[obje_idx + 1] == "1 FILE https://gw.geneanet.org/some/image.jpg"
+    assert lines[obje_idx + 2] == "1 TITL Portrait"
+    assert lines[obje_idx + 3] == "1 SOUR @S1@"
+    assert lines[obje_idx + 4] == "2 PAGE https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=0"
+
+    # Same Geneanet-attribution title as everything else -> dedupes to one
+    # SOUR record, linked to the REPO record.
+    assert gedcom.count("0 @S1@ SOUR") == 1
+    assert "0 @R1@ REPO" in gedcom
+
+
+def test_generate_gedcom_excludes_media_when_disabled():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        media=[Media(url="https://gw.geneanet.org/some/image.jpg")],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {}, include_media=False)
+    assert "OBJE" not in gedcom

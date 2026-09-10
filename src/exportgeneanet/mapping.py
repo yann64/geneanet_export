@@ -367,7 +367,9 @@ def individual_from_person(
         associations=_relations_from(person.get("rparents", []) + person.get("related", [])),
     )
     if person.get("image"):
-        individual.media.append(Media(url=person["image"]))
+        individual.media.append(
+            Media(url=person["image"], sources=[geneanet_tree_citation(username, citation_url)])
+        )
 
     for element in person.get("events", {}).get("elements", []):
         event_type = element.get("type")

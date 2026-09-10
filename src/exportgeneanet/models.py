@@ -25,6 +25,12 @@ class Note:
 class Media:
     url: str
     title: str = ""
+    # Same Geneanet-tree-attribution citation every other fact carries (see
+    # mapping.geneanet_tree_citation) — gedcom_writer.py emits Media as a
+    # standalone GEDCOM OBJE record specifically so it can carry a
+    # SOURCE_CITATION substructure (the embedded MULTIMEDIA_LINK form used
+    # by earlier versions of this writer can't).
+    sources: list[SourceCitation] = field(default_factory=list)
 
 
 @dataclass

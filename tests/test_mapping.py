@@ -438,6 +438,15 @@ def test_individual_from_person_event_without_src_still_gets_geneanet_source():
     assert birth.sources[0].is_geneanet_source
 
 
+def test_individual_from_person_maps_image_with_geneanet_source():
+    person = _base_person(image="https://gw.geneanet.org/some/image.jpg")
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    (media,) = individual.media
+    assert media.url == "https://gw.geneanet.org/some/image.jpg"
+    assert len(media.sources) == 1
+    assert media.sources[0].is_geneanet_source
+
+
 def test_individual_from_person_maps_nickname_from_qualifiers():
     person = _base_person(qualifiers=["Cyr"])
     individual, _families, _related = individual_from_person(person, USERNAME)

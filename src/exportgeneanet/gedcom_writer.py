@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .config import GENEANET_REPOSITORY_NAME, GENEANET_REPOSITORY_WWW
-from .models import Event, Family, Individual, Note, SourceCitation, Witness
+from .models import Event, Family, Individual, Media, Note, SourceCitation, Witness
 
 _MAX_LINE_CHARS = 200  # conservative CONC threshold; GEDCOM 5.5.1 caps at 255
 _GENEANET_REPOSITORY_ID = "R1"
@@ -56,13 +56,14 @@ def _number_ids(keys: Iterable[str], prefix: str) -> dict[str, str]:
 
 
 def _collect_source_ids(
-    individuals: dict[str, Individual], families: dict[str, Family]
+    individuals: dict[str, Individual], families: dict[str, Family], include_media: bool = True
 ) -> tuple[dict[str, str], set[str]]:
     """Assign a stable `@S<n>@` id to every distinct source citation *title*
-    found anywhere (events, and Individual/Family general sources), so
-    repeated citations (the same archival record cited for several facts, or
-    the shared Geneanet-tree attribution every fact carries) become one SOUR
-    record referenced by pointer rather than duplicated free text.
+    found anywhere (events, Individual/Family general sources, and — when
+    `include_media` — Media sources), so repeated citations (the same
+    archival record cited for several facts, or the shared Geneanet-tree
+    attribution every fact carries) become one SOUR record referenced by
+    pointer rather than duplicated free text.
 
     Also returns the subset of titles that are the Geneanet-tree attribution
     (`SourceCitation.is_geneanet_source`) — only those get linked to the
@@ -85,6 +86,9 @@ def _collect_source_ids(
         register(individual.sources)
         for event in individual.events:
             register(event.sources)
+        if include_media:
+            for media in individual.media:
+                register(media.sources)
 
     for family in families.values():
         register(family.sources)
@@ -176,9 +180,20 @@ def generate_gedcom(
     g.add(2, "FORM", "LINEAGE-LINKED")
     g.add(1, "CHAR", "UTF-8")
 
-    source_ids, geneanet_titles = _collect_source_ids(individuals, families)
+    source_ids, geneanet_titles = _collect_source_ids(individuals, families, include_media)
     individual_ids = _number_ids(individuals.keys(), "I")
     family_ids = _number_ids(families.keys(), "F")
+
+    # Media becomes a standalone OBJE record (not an embedded MULTIMEDIA_LINK)
+    # specifically so it can carry a SOURCE_CITATION — assign ids up front in
+    # a fixed order so the INDI loop below can emit pointers before the
+    # records themselves are written out.
+    media_records: list[tuple[str, Media]] = []
+    if include_media:
+        for individual in individuals.values():
+            for media in individual.media:
+                media_records.append((f"O{len(media_records) + 1}", media))
+    media_ids = {id(media): media_id for media_id, media in media_records}
 
     # FAMC (family where the individual is a child) is derived from the
     # families' child lists, since Individual only stores father/mother keys.
@@ -222,10 +237,7 @@ def generate_gedcom(
 
         if include_media:
             for media in individual.media:
-                g.add(1, "OBJE")
-                g.add(2, "FILE", media.url)
-                if media.title:
-                    g.add(2, "TITL", media.title)
+                g.add(1, "OBJE", f"@{media_ids[id(media)]}@")
 
         famc = famc_by_person.get(key)
         if famc:
@@ -250,6 +262,13 @@ def generate_gedcom(
         if include_notes:
             _write_notes(g, 1, fam.notes)
         _write_sources(g, 1, fam.sources, source_ids)
+
+    for media_id, media in media_records:
+        g.add(0, f"@{media_id}@", "OBJE")
+        g.add(1, "FILE", media.url)
+        if media.title:
+            g.add(1, "TITL", media.title)
+        _write_sources(g, 1, media.sources, source_ids)
 
     if geneanet_titles:
         g.add(0, f"@{_GENEANET_REPOSITORY_ID}@", "REPO")
