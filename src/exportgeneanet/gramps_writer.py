@@ -47,11 +47,11 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from uuid import uuid4
 
 from . import places_reference
+from .config import tool_version
 from .models import Event, Family, GenealogyDate, Individual, Media, Note, SourceCitation
 
 _GRAMPS_NS = "http://gramps-project.org/xml/1.7.1/"
@@ -144,13 +144,6 @@ def _render_gramps_date(parent: ET.Element, d: GenealogyDate | None) -> None:
     if attr_name and attr_value:
         attrs[attr_name] = attr_value
     ET.SubElement(parent, "dateval", **attrs)
-
-
-def _tool_version() -> str:
-    try:
-        return version("exportgeneanet")
-    except PackageNotFoundError:
-        return "0.0.0"
 
 
 def _city_name_from_raw(raw_place_text: str) -> str:
@@ -541,7 +534,7 @@ def generate_gramps_xml(
     registry.write_repository()
 
     header = registry.sections["header"]
-    ET.SubElement(header, "created", date=time.strftime("%Y-%m-%d"), version=_tool_version())
+    ET.SubElement(header, "created", date=time.strftime("%Y-%m-%d"), version=tool_version())
     researcher = ET.SubElement(header, "researcher")
     ET.SubElement(researcher, "resname").text = "ExportGeneanet"
 

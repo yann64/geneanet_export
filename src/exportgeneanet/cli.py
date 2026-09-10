@@ -8,21 +8,42 @@ from pathlib import Path
 import typer
 
 from .api_client import GeneanetApiClient
-from .config import DEFAULT_LANG, DEFAULT_MAX_DELAY_SECONDS, DEFAULT_MIN_DELAY_SECONDS
+from .config import DEFAULT_LANG, DEFAULT_MAX_DELAY_SECONDS, DEFAULT_MIN_DELAY_SECONDS, tool_version
 from .gedcom_writer import write_gedcom_file
+from .gramps_writer import write_gramps_file
 from .identifiers import PersonKey
 from .rate_limiter import RateLimiter
 from .tree_crawler import CrawlState, crawl_ascendants, crawl_full
 
 app = typer.Typer(
-    help="Export a public Geneanet (gw.geneanet.org) tree to GEDCOM, respecting "
-    "Geneanet's usage rules: public data only, paced with randomized delays."
+    help="Export a public Geneanet (gw.geneanet.org) tree to GEDCOM or Gramps XML, "
+    "respecting Geneanet's usage rules: public data only, paced with randomized delays."
 )
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"exportgeneanet {tool_version()}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True, help="Show the version and exit."
+    ),
+) -> None:
+    pass
 
 
 class Scope(str, Enum):
     all = "all"
     ascendants = "ascendants"
+
+
+class ExportFormat(str, Enum):
+    gedcom = "gedcom"
+    gramps = "gramps"
 
 
 def _individual_option(help_extra: str = "") -> list[str]:
@@ -66,7 +87,8 @@ def export(
         "For --scope ascendants these are the root(s) of the lineage(s); for --scope "
         "all they're just starting points for discovering the rest of the tree."
     ),
-    output: Path = typer.Option(..., "--output", "-o", help="Path to the .ged file to write."),
+    format: ExportFormat = typer.Option(ExportFormat.gedcom, help="'gedcom' (.ged) or 'gramps' (.gramps)."),
+    output: Path = typer.Option(..., "--output", "-o", help="Path to the export file to write."),
     lang: str = typer.Option(DEFAULT_LANG),
     min_delay: float = typer.Option(DEFAULT_MIN_DELAY_SECONDS),
     max_delay: float = typer.Option(DEFAULT_MAX_DELAY_SECONDS),
@@ -78,7 +100,7 @@ def export(
         None, help="Checkpoint file path (default: crawl-state-<username>-<scope>.json)."
     ),
 ) -> None:
-    """Crawl the tree (fully, or one or more lineages' ascendants) and write a GEDCOM file."""
+    """Crawl the tree (fully, or one or more lineages' ascendants) and write a GEDCOM or Gramps XML file."""
     limiter = RateLimiter(min_delay, max_delay)
     client = GeneanetApiClient(username, limiter, lang=lang)
     roots = [PersonKey.parse(i) for i in individual]
@@ -97,7 +119,8 @@ def export(
             client, roots, nb_asc=nb_asc, state=state, state_path=state_path, on_progress=on_progress
         )
 
-    write_gedcom_file(
+    write_file = write_gedcom_file if format is ExportFormat.gedcom else write_gramps_file
+    write_file(
         output, state.individuals, state.families, include_notes=include_notes, include_media=include_media
     )
     typer.echo(f"Wrote {len(state.individuals)} individuals / {len(state.families)} families to {output}")

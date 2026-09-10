@@ -3,7 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+
+def tool_version() -> str:
+    """The installed package version — shared by the CLI's `--version`,
+    the GUI's window title, and the Gramps header's `<created version=...>`
+    (a genuine install metadata lookup, not a hardcoded string, so it can
+    never drift out of sync with `pyproject.toml`). Falls back to a clearly
+    fake version rather than raising if metadata isn't found at all (e.g. a
+    frozen build missing `copy_metadata` — a real gap to fix in the
+    packaging spec, not something worth crashing over here)."""
+    try:
+        return version("exportgeneanet")
+    except PackageNotFoundError:
+        return "0.0.0"
+
 
 STATE_DIR = Path.home() / ".exportgeneanet"
 
