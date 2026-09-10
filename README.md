@@ -1,7 +1,7 @@
 # ExportGeneanet
 
 Export a public [Geneanet](https://www.geneanet.org/) tree to a GEDCOM 5.5.1
-file, using only data that is publicly displayed on the site.
+or Gramps XML file, using only data that is publicly displayed on the site.
 
 Given a Geneanet username, the tool can:
 
@@ -9,6 +9,11 @@ Given a Geneanet username, the tool can:
   family links.
 - Export the entire tree (individuals, families, events, notes, sources,
   media), or just the **ascendants** of one or more selected individuals.
+- Write either **GEDCOM 5.5.1** or **Gramps XML** (`--format gedcom|gramps`,
+  default `gedcom`) — see "Gramps XML export" below for what's different
+  about the Gramps writer specifically.
+- Optionally **download media files** (photos) to a folder instead of just
+  linking the remote URL (`--download-media --media-dir DIR`).
 
 A Typer-based CLI (`exportgeneanet`) and an optional PySide6 (Qt6) GUI
 (`exportgeneanet-gui`) both sit on top of the same library code — the GUI has
@@ -94,6 +99,17 @@ exportgeneanet export --username yann64 --scope ascendants \
 # Resume an interrupted export
 exportgeneanet export --username yann64 --scope all \
     --individual "etienne.barbel.0" --output yann64.ged --resume
+
+# Write Gramps XML instead of GEDCOM
+exportgeneanet export --username yann64 --scope ascendants \
+    --individual "etienne.barbel.0" --format gramps --output yann64.gramps
+
+# Download media files (photos) into a folder instead of just linking them
+exportgeneanet export --username yann64 --scope ascendants \
+    --individual "etienne.barbel.0" --output yann64.ged \
+    --download-media --media-dir ./yann64-media
+
+exportgeneanet --version
 ```
 
 `--individual` uses the form `given.surname[.oc]`, where `oc` is GeneWeb's
@@ -112,6 +128,35 @@ family with no recorded link back). If `--scope all` looks incomplete, pass
 `--individual` again for a person in the missing branch — every seed's
 reachable set gets merged into the same export.
 
+### Gramps XML export
+
+`--format gramps` writes [Gramps](https://gramps-project.org/)'s own native
+XML format instead of GEDCOM — Gramps users get a richer import: a real
+place hierarchy (Country/Region/Department/City, not a flat text field), a
+proper Source/Citation/Repository structure, and sortable structured dates.
+
+The place hierarchy is matched against a bundled reference dataset (~35,000
+French communes, converted from a
+[Gramps place-hierarchy file](https://www.histoiredeserignan.fr/downloads/genealogy/lieux.gramps))
+using the **exact same place IDs** as that reference file. If you (or your
+Gramps database) already imported that same file, importing an
+ExportGeneanet `.gramps` export merges its places cleanly into your
+existing place tree instead of creating a second, duplicate one. A place
+Geneanet reports that isn't in the reference data (a foreign place, or a
+French commune the reference happens to be missing) still gets exported,
+just without a pre-matched ID.
+
+### Media downloads
+
+By default, media (photos) are exported as a link to Geneanet's own URL —
+nothing is ever downloaded. Passing `--download-media --media-dir DIR`
+(GUI: the "Download media to folder" checkbox) fetches each file into
+`DIR` instead, always over HTTPS (an `http://` URL is upgraded before the
+request is ever made — never a plain-HTTP fallback), through the same
+rate-limited, sequential request budget as every other Geneanet call this
+tool makes. A failed download for one photo logs a warning and falls back
+to linking that one file's URL rather than aborting the whole export.
+
 ### GUI
 
 ```bash
@@ -119,11 +164,13 @@ exportgeneanet-gui
 ```
 
 Search by surname/given name to pick seed individual(s) instead of typing
-`given.surname.oc` by hand, then the same scope/output/resume/rate-limit
-options as the CLI. Running it without the `gui` extra installed prints a
-`pip install exportgeneanet[gui]` hint instead of a traceback. The GUI and
-CLI share checkpoint files (`crawl-state-<username>-<scope>.json`), so an
-export started in one can be resumed in the other.
+`given.surname.oc` by hand, then the same scope/format/output/media/resume/
+rate-limit options as the CLI (including the GEDCOM/Gramps XML format
+choice and the "Download media to folder" option). Running it without the
+`gui` extra installed prints a `pip install exportgeneanet[gui]` hint
+instead of a traceback. The GUI and CLI share checkpoint files
+(`crawl-state-<username>-<scope>.json`), so an export started in one can be
+resumed in the other. The window title shows the installed version.
 
 #### Standalone GUI download (no Python required)
 
@@ -150,9 +197,9 @@ ruff format .   # format
 CI (`.github/workflows/ci.yml`) runs all three on every push/PR to `main`,
 against Python 3.10 (the declared minimum) and 3.12.
 
-Tests in `tests/` cover the GEDCOM writer, protobuf-response mapping,
-person identifiers, and crawl-state checkpointing — all without network
-access.
+Tests in `tests/` cover the GEDCOM and Gramps XML writers, protobuf-response
+mapping, person identifiers, the places reference lookup, and crawl-state
+checkpointing — all without network access.
 
 `src/exportgeneanet/proto/` holds generated Python bindings for Geneanet's
 own `.proto` schemas, committed to the repo like the reference addon does so
@@ -165,6 +212,15 @@ python scripts/generate_proto.py
 
 This uses `grpc_tools.protoc` (a pip package, part of the `dev` extra) —
 no system-level `protoc` install needed.
+
+`src/exportgeneanet/data/france_places.json` is a similar committed,
+generated artifact: a compact conversion of the Gramps place-hierarchy file
+described above (dropping coordinates/timestamps/alternate names).
+Regenerate it (only needed if that reference file changes) with:
+
+```bash
+python scripts/convert_places_reference.py /path/to/lieux.gramps
+```
 
 ### Building the standalone GUI executable
 

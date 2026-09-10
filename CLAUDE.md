@@ -5,12 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Python tool that exports a public [Geneanet](https://www.geneanet.org/) tree
-to a GEDCOM 5.5.1 file — either the whole tree or just the ascendants of one
-selected individual. Two front ends on the same library code: a Typer CLI
-(`exportgeneanet`) and an optional PySide6 (Qt6) GUI (`exportgeneanet-gui`,
-the `gui` extra — see `src/exportgeneanet/gui/`). The GUI is CLI parity, not
-a separate feature set: same scope/seed/output/resume/rate-limit options,
-just a search-based picker instead of hand-typing `given.surname.oc`.
+to a GEDCOM 5.5.1 or Gramps XML file — either the whole tree or just the
+ascendants of one selected individual. Two front ends on the same library
+code: a Typer CLI (`exportgeneanet`) and an optional PySide6 (Qt6) GUI
+(`exportgeneanet-gui`, the `gui` extra — see `src/exportgeneanet/gui/`). The
+GUI is CLI parity, not a separate feature set: same scope/seed/format/
+output/media/resume/rate-limit options, just a search-based picker instead
+of hand-typing `given.surname.oc`.
 
 Test accounts for manual verification: `yann64` (primary), `jpmanzinali`,
 `jloger`.
@@ -31,9 +32,14 @@ ruff format .                     # format (run before committing)
 exportgeneanet list --username yann64 --individual "etienne.barbel.0"
 exportgeneanet export --username yann64 --scope all --individual "etienne.barbel.0" -o yann64.ged
 exportgeneanet export --username yann64 --scope ascendants --individual "etienne.barbel.0" -o out.ged
+exportgeneanet export --username yann64 --individual "etienne.barbel.0" --format gramps -o out.gramps
+exportgeneanet export --username yann64 --individual "etienne.barbel.0" -o out.ged \
+    --download-media --media-dir ./media   # opt-in, HTTPS only — see media_downloader.py below
+exportgeneanet --version
 exportgeneanet-gui                 # optional Qt6 GUI, same options as export above
 
 python scripts/generate_proto.py   # regenerate src/exportgeneanet/proto/, only if Geneanet's API schema changes
+python scripts/convert_places_reference.py /path/to/lieux.gramps  # regenerate data/france_places.json
 ```
 
 Ruff (lint + format) is configured in `pyproject.toml` — `[tool.ruff]`/
@@ -114,6 +120,13 @@ Everything lives in `src/exportgeneanet/`:
   first; never add concurrency here.
 - **`rate_limiter.py`** — sleeps a random `[min_delay, max_delay]` duration
   before every single request. Hard requirement, not a tunable nicety.
+- **`config.py`** — shared constants plus `tool_version()`, a genuine
+  `importlib.metadata` lookup (never a hardcoded string, so it can't drift
+  from `pyproject.toml`) used by the CLI's `--version`, the GUI's window
+  title, and the Gramps export header's `<created version=...>`. Frozen
+  builds need `copy_metadata("exportgeneanet")` in the PyInstaller spec for
+  this to resolve instead of silently falling back to `"0.0.0"` — see
+  `packaging/exportgeneanet-gui.spec`.
 - **`mapping.py`** — translates protobuf API responses (as plain dicts via
   `google.protobuf.json_format.MessageToDict(..., preserving_proto_field_name=True)`)
   into `models.py` dataclasses. Holds several enum → GEDCOM lookup tables,
@@ -180,10 +193,20 @@ Everything lives in `src/exportgeneanet/`:
   `firstname_aliases`/`surname_aliases` vary only one component, so the
   other comes from the person's own primary name and can be slashed
   normally.
-- **`models.py`** — plain dataclasses mirroring GEDCOM concepts (`Individual`,
-  `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic. Keeps
-  `gedcom_writer.py` a thin serializer instead of a second place that
-  understands genealogy or the API shape.
+- **`models.py`** — plain dataclasses mirroring genealogy concepts
+  (`Individual`, `Family`, `Event`, `Note`, `Media`, `Place`), API-agnostic
+  *and* format-agnostic (despite a few GEDCOM-flavored field names, e.g.
+  `Event.tag`) — both `gedcom_writer.py` and `gramps_writer.py` serialize
+  these same dataclasses, so neither is a second place that understands
+  genealogy or the API shape. `Event.date` is a `GenealogyDate` (qualifier +
+  a `PartialDate` year/month/day, or a `range_start`/`range_end` pair for
+  BET...AND, or `fallback_text` when unparseable) — a format-agnostic
+  representation `mapping.parse_geneweb_date()` produces once, that each
+  writer renders into its own date syntax (`gedcom_writer._render_gedcom_date`
+  vs. `gramps_writer._render_gramps_date`). `Media.local_path` is set only
+  when `--download-media` actually fetched the file (see
+  `media_downloader.py` below); both writers prefer it over `url` when
+  present.
 - **`tree_crawler.py`** — the two crawl strategies behind `--scope`, both
   taking a **list** of seeds/roots (merged into one `CrawlState`) rather
   than one:
@@ -234,11 +257,75 @@ Everything lives in `src/exportgeneanet/`:
   needs it. `include_notes=False` suppresses event notes and witness notes
   too, not just top-level `Individual`/`Family` notes — keep that
   consistent if adding another note-bearing field.
+- **`data/france_places.json`** + **`places_reference.py`** — a compact,
+  committed conversion (`scripts/convert_places_reference.py`, run only
+  when the source changes — see Commands above) of a Gramps place-hierarchy
+  file the project maintainer publishes
+  (histoiredeserignan.fr/downloads/genealogy/lieux.gramps): ~35,000 French
+  communes, each with a `handle`/`id` and a City→Department→Region→Country
+  parent chain. `places_reference.resolve(raw_place_text)` parses Geneanet's
+  comma-separated place strings (confirmed real formats: `"City, Department,
+  Region, Country"`, or with a postcode inserted after City — the postcode
+  segment, a bare 4-5 digit group, is dropped; there's no postcode level in
+  the reference hierarchy either) and returns the matching chain **with the
+  reference file's own handles/ids preserved**. That's the point: a
+  `gramps_writer.py` export reusing those exact handles merges cleanly into
+  a Gramps database that already imported the same reference file, instead
+  of creating a duplicate parallel place tree. Matching needs (city name,
+  department name) together — 1,452 of the 34,955 city names aren't unique
+  on their own (e.g. "Selles" names 4 different real communes). Falls back
+  to a country-only match, or `[]`, when nothing matches; `gramps_writer.py`
+  builds a fresh ad hoc place node in that case, not this module.
+- **`gramps_writer.py`** — the Gramps XML 1.7.1 sibling of `gedcom_writer.py`
+  (`generate_gramps_xml(individuals, families, ...) -> str`), built with
+  `xml.etree.ElementTree` rather than a line builder (Gramps XML is
+  genuinely a tree, GEDCOM is line-based). Gramps's data model differs
+  structurally from GEDCOM in ways that shaped this module — see its own
+  docstring for the full list, but the two easiest to get wrong: **every
+  fact, including a family's own marriage/divorce, is its own top-level
+  `<event>` record** referenced by `<eventref>` (no inline embedding like
+  GEDCOM), and **`<person>`'s children must appear in the DTD's declared
+  order** (`gender, name*, eventref*, objref*, attribute*, childof*,
+  parentin*, personref*, noteref*, citationref*` — a strict sequence, not
+  an unordered bag), including witness `eventref`s discovered while
+  processing *other* people's events and `childof`/`parentin` only known
+  once every family's been processed — which is why person/family building
+  here is collect-then-emit in two passes (`_PersonBuild`/`_FamilyBuild`
+  gather every fact first), unlike `gedcom_writer.py`'s incremental
+  appending. Also notable: event witnesses point the *opposite* direction
+  from GEDCOM's ASSO — the witness's own `<person>` gets an `<eventref
+  role="Witness">`, since Gramps has no "this event has these witnesses"
+  field at all (`Individual.associations` — godparent/adoptive/etc. — *is*
+  a close ASSO equivalent, via `<personref rel="...">`). Structural
+  correctness here isn't just eyeballed: verified by validating generated
+  output against the real, official Gramps XML 1.7.1 DTD with `xmllint`
+  during development (not part of the automated test suite — no `xmllint`/
+  DTD-fetch dependency in CI; `tests/test_gramps_writer.py` does
+  `ElementTree`-based structural assertions instead).
+- **`media_downloader.py`** — `download_media(session, rate_limiter, url,
+  key, index, dest_dir)`, used only when `--download-media`/the GUI's
+  "Download media to folder" checkbox is set (the long-standing default
+  everywhere else is link-only, nothing ever fetched). Always rewrites the
+  URL to `https://` before ever making the request — never a plain-HTTP
+  fallback, regardless of the source URL's scheme. Reuses the crawl's own
+  `requests.Session` + `RateLimiter` rather than a separate unthrottled
+  path, so downloading media honors the same sequential, paced request
+  budget as every other Geneanet call this project makes. Filenames are
+  derived from the owning individual's `PersonKey` + a per-person index,
+  never the remote URL's own path, so nothing about the URL's content ever
+  reaches the local filesystem path. Like `api_client.py`, this is never
+  unit-tested against a mocked HTTP layer — only the pure filename/
+  HTTPS-rewrite helpers are; the actual request was verified with a real
+  call during development.
 - **`cli.py`** — Typer app wiring `list` / `export`. `--individual` is
   required (at least one) and repeatable (`list[str]`) for both — no
   default-person fallback exists over the API, and repeatable is what lets
   one export cover multiple disconnected tree branches (see
-  `tree_crawler.py` above).
+  `tree_crawler.py` above). `--format gedcom|gramps` (default `gedcom`,
+  fully backward compatible) selects the writer; `--download-media`
+  requires both `--media-dir` and `--include-media`, validated before any
+  crawling starts. `--version` is an eager `@app.callback()` option so it
+  works before Typer even looks for a subcommand.
 - **`gui/`** — the optional `exportgeneanet-gui` PySide6 front end, CLI
   parity only (no feature the CLI lacks). `[project.scripts]` registers the
   entry point unconditionally, so `app.py`'s `main()` imports PySide6
@@ -248,24 +335,30 @@ Everything lives in `src/exportgeneanet/`:
   `crawl_worker.py`'s `CrawlWorker(QThread)` owns exactly one
   `GeneanetApiClient`+`RateLimiter` per GUI session; both "search for a
   person" (`search_persons`) and "run the export" (`crawl_full`/
-  `crawl_ascendants` + `write_gedcom_file`) are tasks pushed onto the same
-  internal `queue.Queue` and processed one at a time in `run()` — this is
-  what keeps the GUI honoring the same never-concurrent,
-  always-rate-limited guarantee as the CLI, not just a threading
-  convenience. Cancellation is a `CrawlCancelled` exception raised from the
-  `on_progress` callback when the user clicks Cancel; it unwinds out of the
-  crawl function mid-loop, and the handler reloads `CrawlState.load(state_path)`
-  from disk rather than trusting the outer (never-reassigned,
-  exception-unwound) `state` variable — safe because of the
-  save-before-on_progress ordering noted under `tree_crawler.py` above.
-  `search_widget.py`'s `search_result_rows()` (pure function, unit-tested
-  in `tests/test_gui_search_widget.py`) and `main_window.py`'s
-  `default_state_path()` (matches `cli.py`'s own
+  `crawl_ascendants` + `write_gedcom_file`/`write_gramps_file` +, if
+  requested, `media_downloader.download_media` using that same session/
+  limiter) are tasks pushed onto the same internal `queue.Queue` and
+  processed one at a time in `run()` — this is what keeps the GUI honoring
+  the same never-concurrent, always-rate-limited guarantee as the CLI, not
+  just a threading convenience. A failed media download emits `warning`
+  (logged, doesn't abort the export) rather than being misreported through
+  `search_failed`/`export_failed`. Cancellation is a `CrawlCancelled`
+  exception raised from the `on_progress` callback when the user clicks
+  Cancel; it unwinds out of the crawl function mid-loop, and the handler
+  reloads `CrawlState.load(state_path)` from disk rather than trusting the
+  outer (never-reassigned, exception-unwound) `state` variable — safe
+  because of the save-before-on_progress ordering noted under
+  `tree_crawler.py` above. `search_widget.py`'s `search_result_rows()`
+  (pure function, unit-tested in `tests/test_gui_search_widget.py`) and
+  `main_window.py`'s `default_state_path()` (matches `cli.py`'s own
   `crawl-state-<username>-<scope>.json` convention exactly, so a checkpoint
   started in one front end resumes in the other) are the only
   GUI-adjacent logic worth testing without a display; the widgets
-  themselves are exercised by manual testing only (see README's GUI
-  section), not by the automated suite.
+  themselves (including the Format radio group and the "Download media to
+  folder" checkbox+picker, both mirroring the CLI's `--format`/
+  `--download-media`) are exercised by manual testing only (see README's
+  GUI section), not by the automated suite. Window title includes
+  `config.tool_version()`.
 - **`packaging/run_gui.py`** + **`scripts/build_executable.py`** — produce
   the standalone `exportgeneanet-gui` executable (PyInstaller, `build`
   extra) that `.github/workflows/release.yml` attaches to a GitHub Release
@@ -318,12 +411,25 @@ Everything lives in `src/exportgeneanet/`:
   absent, then actually run it under a real display (not just offscreen)
   before considering a packaging change verified.
 
+  The spec also has `copy_metadata("exportgeneanet")` +
+  `collect_data_files("exportgeneanet")` (`PyInstaller.utils.hooks`) —
+  PyInstaller doesn't bundle installed-package metadata or
+  `importlib.resources` data files by default, so without these a frozen
+  build would silently show `"0.0.0"` for `config.tool_version()` and be
+  completely unable to resolve `places_reference.py`'s bundled JSON.
+  Confirmed by actually building and running a frozen test binary — not
+  just trusting the spec change — that both work correctly once frozen
+  (same standard this project holds every packaging change to, given the
+  glib/xkbcommon segfault history above).
+
 ### Data flow for `export`
 
 `cli.export` → `tree_crawler.crawl_full` or `crawl_ascendants` (driving
 `GeneanetApiClient` + `RateLimiter` + `mapping.individual_from_person`) →
-accumulates a `CrawlState` →
-`gedcom_writer.write_gedcom_file(state.individuals, state.families, ...)`.
+accumulates a `CrawlState` → optionally
+`media_downloader.download_media(...)` per `Media`, setting `local_path` →
+`gedcom_writer.write_gedcom_file` or `gramps_writer.write_gramps_file`
+(`state.individuals, state.families, ...`), chosen by `--format`.
 
 ## Testing against real data
 
