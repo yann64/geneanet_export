@@ -35,6 +35,9 @@ exportgeneanet-gui = "exportgeneanet.gui.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+exportgeneanet = ["data/*.json"]
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"
