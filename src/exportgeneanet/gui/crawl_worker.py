@@ -19,7 +19,9 @@ from PySide6.QtCore import QThread, Signal
 
 from ..api_client import GeneanetApiClient
 from ..gedcom_writer import write_gedcom_file
+from ..gramps_writer import write_gramps_file
 from ..identifiers import PersonKey
+from ..media_downloader import download_media
 from ..models import Individual
 from ..rate_limiter import RateLimiter
 from ..tree_crawler import CrawlState, crawl_ascendants, crawl_full
@@ -49,6 +51,9 @@ class CrawlWorker(QThread):
     export_cancelled = Signal(object)  # CrawlState (partial)
     search_failed = Signal(str)
     export_failed = Signal(str)
+    # Non-fatal, e.g. one failed media download — the export continues
+    # (falls back to linking that file's remote URL), this is just logged.
+    warning = Signal(str)
 
     def __init__(self, username: str, lang: str, min_delay: float, max_delay: float) -> None:
         super().__init__()
@@ -78,13 +83,30 @@ class CrawlWorker(QThread):
         include_media: bool,
         state: CrawlState | None,
         state_path: Path,
+        export_format: str = "gedcom",
+        download_media_files: bool = False,
+        media_dir: Path | None = None,
     ) -> None:
-        """`scope` is `"all"` or `"ascendants"`. `state_path` should always
-        be set (even if the user didn't ask to resume) so a cancellation
-        mid-crawl stays recoverable — see `CrawlCancelled`."""
+        """`scope` is `"all"` or `"ascendants"`; `export_format` is
+        `"gedcom"` or `"gramps"`. `state_path` should always be set (even if
+        the user didn't ask to resume) so a cancellation mid-crawl stays
+        recoverable — see `CrawlCancelled`."""
         self._cancel_requested = False
         self._tasks.put(
-            ("export", scope, seeds, output, nb_asc, include_notes, include_media, state, state_path)
+            (
+                "export",
+                scope,
+                seeds,
+                output,
+                nb_asc,
+                include_notes,
+                include_media,
+                state,
+                state_path,
+                export_format,
+                download_media_files,
+                media_dir,
+            )
         )
 
     def run(self) -> None:
@@ -116,6 +138,9 @@ class CrawlWorker(QThread):
         include_media: bool,
         state: CrawlState | None,
         state_path: Path,
+        export_format: str,
+        download_media_files: bool,
+        media_dir: Path | None,
     ) -> None:
         def on_progress(individual: Individual, done: int | None = None, total: int | None = None) -> None:
             if self._cancel_requested:
@@ -141,8 +166,24 @@ class CrawlWorker(QThread):
             self.export_cancelled.emit(partial)
             return
 
+        if download_media_files:
+            for individual in state.individuals.values():
+                for i, media in enumerate(individual.media):
+                    try:
+                        media.local_path = download_media(
+                            self._client.session,
+                            self._client.rate_limiter,
+                            media.url,
+                            individual.key,
+                            i,
+                            media_dir,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - one bad media URL shouldn't abort the export
+                        self.warning.emit(f"Failed to download media for {individual.key}: {exc}")
+
         if output is not None:
-            write_gedcom_file(
+            write_file = write_gedcom_file if export_format == "gedcom" else write_gramps_file
+            write_file(
                 output,
                 state.individuals,
                 state.families,

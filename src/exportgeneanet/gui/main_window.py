@@ -31,12 +31,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import DEFAULT_LANG, DEFAULT_MAX_DELAY_SECONDS, DEFAULT_MIN_DELAY_SECONDS
+from ..config import DEFAULT_LANG, DEFAULT_MAX_DELAY_SECONDS, DEFAULT_MIN_DELAY_SECONDS, tool_version
 from ..identifiers import PersonKey
 from ..models import Individual
 from ..tree_crawler import CrawlState
 from .crawl_worker import CrawlWorker
 from .search_widget import PersonSearchWidget
+
+_FORMAT_FILTERS = {
+    "gedcom": ("Save GEDCOM as", "GEDCOM files (*.ged)"),
+    "gramps": ("Save Gramps XML as", "Gramps XML files (*.gramps)"),
+}
 
 
 def default_state_path(username: str, scope: str) -> Path:
@@ -48,13 +53,14 @@ def default_state_path(username: str, scope: str) -> Path:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("ExportGeneanet")
+        self.setWindowTitle(f"ExportGeneanet v{tool_version()}")
         self.resize(720, 720)
 
         self._worker: CrawlWorker | None = None
         self._worker_username: str | None = None
         self._seeds: list[PersonKey] = []
         self._output_path: Path | None = None
+        self._media_dir_path: Path | None = None
 
         self._build_ui()
 
@@ -101,6 +107,15 @@ class MainWindow(QMainWindow):
         self._scope_ascendants.toggled.connect(self._nb_asc.setEnabled)
         layout.addWidget(scope_group)
 
+        format_group = QGroupBox("Format")
+        format_layout = QHBoxLayout(format_group)
+        self._format_gedcom = QRadioButton("GEDCOM (.ged)")
+        self._format_gedcom.setChecked(True)
+        self._format_gramps = QRadioButton("Gramps XML (.gramps)")
+        format_layout.addWidget(self._format_gedcom)
+        format_layout.addWidget(self._format_gramps)
+        layout.addWidget(format_group)
+
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout(options_group)
         self._include_notes = QCheckBox("Include notes")
@@ -111,12 +126,27 @@ class MainWindow(QMainWindow):
         options_layout.addWidget(self._include_notes)
         options_layout.addWidget(self._include_media)
         options_layout.addWidget(self._resume)
+
+        media_dir_row = QHBoxLayout()
+        self._download_media = QCheckBox("Download media to folder:")
+        self._media_dir_field = QLineEdit()
+        self._media_dir_field.setReadOnly(True)
+        self._media_dir_field.setPlaceholderText("(links to the remote URL instead, if left unset)")
+        media_dir_button = QPushButton("Choose folder…")
+        media_dir_button.clicked.connect(self._choose_media_dir)
+        media_dir_row.addWidget(self._download_media)
+        media_dir_row.addWidget(self._media_dir_field)
+        media_dir_row.addWidget(media_dir_button)
+        options_layout.addLayout(media_dir_row)
+        # Downloading only makes sense when media is included in the export at all.
+        self._include_media.toggled.connect(self._download_media.setEnabled)
+
         layout.addWidget(options_group)
 
         output_row = QHBoxLayout()
         self._output_field = QLineEdit()
         self._output_field.setReadOnly(True)
-        self._output_field.setPlaceholderText("Choose where to save the .ged file…")
+        self._output_field.setPlaceholderText("Choose where to save the export file…")
         output_button = QPushButton("Choose output file…")
         output_button.clicked.connect(self._choose_output)
         output_row.addWidget(self._output_field)
@@ -177,6 +207,7 @@ class MainWindow(QMainWindow):
             worker.export_finished.connect(self._on_export_finished)
             worker.export_cancelled.connect(self._on_export_cancelled)
             worker.export_failed.connect(self._on_export_failed)
+            worker.warning.connect(self._on_warning)
             worker.start()
             self._worker = worker
             self._worker_username = username
@@ -204,6 +235,9 @@ class MainWindow(QMainWindow):
     def _on_search_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Search failed", message)
 
+    def _on_warning(self, message: str) -> None:
+        self._log.appendPlainText(f"Warning: {message}")
+
     # -------------------------------------------------------------- seeds --
 
     def _add_seed(self, key: PersonKey) -> None:
@@ -220,11 +254,21 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- output --
 
+    def _selected_format(self) -> str:
+        return "gramps" if self._format_gramps.isChecked() else "gedcom"
+
     def _choose_output(self) -> None:
-        path_str, _ = QFileDialog.getSaveFileName(self, "Save GEDCOM as", filter="GEDCOM files (*.ged)")
+        title, file_filter = _FORMAT_FILTERS[self._selected_format()]
+        path_str, _ = QFileDialog.getSaveFileName(self, title, filter=file_filter)
         if path_str:
             self._output_path = Path(path_str)
             self._output_field.setText(path_str)
+
+    def _choose_media_dir(self) -> None:
+        path_str = QFileDialog.getExistingDirectory(self, "Choose media download folder")
+        if path_str:
+            self._media_dir_path = Path(path_str)
+            self._media_dir_field.setText(path_str)
 
     # ------------------------------------------------------------- export --
 
@@ -237,7 +281,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No individual selected", "Search for and add at least one individual.")
             return
         if self._output_path is None:
-            QMessageBox.warning(self, "No output file", "Choose where to save the .ged file first.")
+            QMessageBox.warning(self, "No output file", "Choose where to save the export file first.")
+            return
+        if self._download_media.isChecked() and self._media_dir_path is None:
+            QMessageBox.warning(
+                self, "No media folder", "Choose a folder to download media to, or uncheck it."
+            )
             return
 
         scope = "all" if self._scope_all.isChecked() else "ascendants"
@@ -267,6 +316,9 @@ class MainWindow(QMainWindow):
             self._include_media.isChecked(),
             state,
             state_path,
+            self._selected_format(),
+            self._download_media.isChecked(),
+            self._media_dir_path,
         )
 
     def _cancel_export(self) -> None:

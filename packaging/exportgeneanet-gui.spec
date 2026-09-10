@@ -5,11 +5,25 @@
 # plain PyInstaller CLI flags can't express. scripts/build_executable.py
 # runs PyInstaller against this file.
 
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+
+# Two things PyInstaller doesn't do by default, both needed here:
+#  - copy_metadata: config.tool_version() reads importlib.metadata at
+#    runtime (the window title, and the Gramps export header) — without
+#    this, a frozen build has no installed-package metadata to find at all
+#    and tool_version() silently falls back to "0.0.0".
+#  - collect_data_files: places_reference.py reads
+#    data/france_places.json via importlib.resources — PyInstaller's
+#    dependency walker only reliably follows actual imports, not data
+#    files reached this way, so without this the frozen build would be
+#    missing it entirely (not just showing a wrong version).
+_datas = copy_metadata("exportgeneanet") + collect_data_files("exportgeneanet")
+
 a = Analysis(
     ["run_gui.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=_datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
