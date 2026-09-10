@@ -171,7 +171,7 @@ class MainWindow(QMainWindow):
                 self._min_delay.value(),
                 self._max_delay.value(),
             )
-            worker.search_results.connect(self._search_widget.set_results)
+            worker.search_results.connect(self._on_search_results)
             worker.search_failed.connect(self._on_search_failed)
             worker.progress.connect(self._on_progress)
             worker.export_finished.connect(self._on_export_finished)
@@ -195,6 +195,11 @@ class MainWindow(QMainWindow):
             self._get_worker().submit_search(lastname, firstname)
         except ValueError as exc:
             QMessageBox.warning(self, "Missing username", str(exc))
+
+    def _on_search_results(self, persons: list) -> None:
+        self._search_widget.set_results(persons)
+        if not persons:
+            QMessageBox.information(self, "No results", "No individuals matched that search.")
 
     def _on_search_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Search failed", message)
