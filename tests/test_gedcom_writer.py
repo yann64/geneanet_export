@@ -1,5 +1,5 @@
 from exportgeneanet.gedcom_writer import generate_gedcom
-from exportgeneanet.models import Event, Family, Individual, Note, Place, Witness
+from exportgeneanet.models import Event, Family, Individual, Note, Place, SourceCitation, Witness
 from exportgeneanet.identifiers import PersonKey
 
 
@@ -90,29 +90,77 @@ def test_generate_gedcom_dedupes_repeated_source_citation():
         key=key1,
         given_name="Jean",
         surname="Dupont",
-        events=[Event(tag="BIRT", date="1950", source=same_text)],
+        events=[Event(tag="BIRT", date="1950", sources=[SourceCitation(title=same_text)])],
     )
     ind2 = Individual(
         key=key2,
         given_name="Paul",
         surname="Dupont",
-        events=[Event(tag="BIRT", date="1952", source=same_text)],
+        events=[Event(tag="BIRT", date="1952", sources=[SourceCitation(title=same_text)])],
     )
     gedcom = generate_gedcom({str(key1): ind1, str(key2): ind2}, {})
     assert gedcom.count("0 @S1@ SOUR") == 1
     assert gedcom.count("@S1@") == 3  # one record + two citation pointers
     assert "1 TITL Registre des naissances, acte 12" in gedcom
+    # A plain archival citation (not flagged as the Geneanet-tree source)
+    # must not fabricate a REPO record or link.
+    assert "REPO" not in gedcom
 
 
 def test_generate_gedcom_individual_and_family_level_sources():
     key = PersonKey(p="jean", n="dupont", oc=0)
     individual = Individual(
-        key=key, given_name="Jean", surname="Dupont", sources=["Person-level source"]
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        sources=[SourceCitation(title="Person-level source")],
     )
-    family = Family(key="fam1", husband=key, sources=["Family-level source"])
+    family = Family(key="fam1", husband=key, sources=[SourceCitation(title="Family-level source")])
     gedcom = generate_gedcom({str(key): individual}, {"fam1": family})
     assert "1 TITL Person-level source" in gedcom
     assert "1 TITL Family-level source" in gedcom
+
+
+def test_generate_gedcom_geneanet_source_gets_repo_link_and_page():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        sources=[
+            SourceCitation(
+                title="Geneanet — tree owner",
+                page="https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=0",
+                is_geneanet_source=True,
+            )
+        ],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    lines = gedcom.splitlines()
+
+    assert "0 @R1@ REPO" in gedcom
+    assert "1 NAME Geneanet" in gedcom
+    assert "1 WWW https://www.geneanet.org/" in gedcom
+
+    sour_idx = lines.index("0 @S1@ SOUR")
+    assert lines[sour_idx + 1] == "1 TITL Geneanet — tree owner"
+    assert "1 REPO @R1@" in lines[sour_idx : sour_idx + 3]
+
+    # The citation under the INDI carries the PAGE (specific person URL).
+    page_idx = lines.index("1 SOUR @S1@")
+    assert lines[page_idx + 1] == "2 PAGE https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=0"
+
+
+def test_generate_gedcom_no_repo_when_no_geneanet_source():
+    key = PersonKey(p="jean", n="dupont", oc=0)
+    individual = Individual(
+        key=key,
+        given_name="Jean",
+        surname="Dupont",
+        sources=[SourceCitation(title="Some archival citation")],
+    )
+    gedcom = generate_gedcom({str(key): individual}, {})
+    assert "REPO" not in gedcom
 
 
 def test_generate_gedcom_divorce_event():

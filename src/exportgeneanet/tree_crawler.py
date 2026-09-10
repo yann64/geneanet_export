@@ -35,7 +35,7 @@ from google.protobuf.json_format import MessageToDict
 from . import mapping
 from .api_client import GeneanetApiClient
 from .identifiers import PersonKey
-from .models import Event, Family, Individual, Media, Note, Place
+from .models import Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
 
 
 @dataclass
@@ -66,6 +66,16 @@ class CrawlState:
         )
 
 
+def _source_citation_from_dict(d: dict) -> SourceCitation:
+    return SourceCitation(
+        title=d["title"], page=d.get("page"), is_geneanet_source=d.get("is_geneanet_source", False)
+    )
+
+
+def _witness_from_dict(d: dict) -> Witness:
+    return Witness(person=PersonKey(**d["person"]), role=d.get("role"), note=d.get("note"))
+
+
 def _event_from_dict(d: dict | None) -> Event | None:
     if d is None:
         return None
@@ -74,6 +84,9 @@ def _event_from_dict(d: dict | None) -> Event | None:
         date=d.get("date"),
         place=Place(**d["place"]) if d.get("place") else None,
         note=Note(**d["note"]) if d.get("note") else None,
+        type=d.get("type"),
+        sources=[_source_citation_from_dict(s) for s in d.get("sources", [])],
+        witnesses=[_witness_from_dict(w) for w in d.get("witnesses", [])],
     )
 
 
@@ -91,6 +104,7 @@ def _individual_from_dict(d: dict) -> Individual:
         mother=PersonKey(**d["mother"]) if d.get("mother") else None,
         family_keys=list(d.get("family_keys", [])),
         source_url=d.get("source_url"),
+        sources=[_source_citation_from_dict(s) for s in d.get("sources", [])],
     )
 
 
@@ -101,7 +115,9 @@ def _family_from_dict(d: dict) -> Family:
         wife=PersonKey(**d["wife"]) if d.get("wife") else None,
         children=[PersonKey(**c) for c in d.get("children", [])],
         marriage=_event_from_dict(d.get("marriage")),
+        divorce=_event_from_dict(d.get("divorce")),
         notes=[Note(**n) for n in d.get("notes", [])],
+        sources=[_source_citation_from_dict(s) for s in d.get("sources", [])],
     )
 
 
@@ -130,14 +146,25 @@ def crawl_ascendants(
         if str(key) in state.visited:
             continue
         person_dict = MessageToDict(client.get_person(index), preserving_proto_field_name=True)
-        individual, _families, _related = mapping.individual_from_person(person_dict)
+        individual, _families, _related = mapping.individual_from_person(person_dict, client.tree)
         state.individuals[str(key)] = individual
         state.visited.add(str(key))
 
         father, mother = individual.father, individual.mother
         if father or mother:
             fam_key = f"{father or 'UNK'}__{mother or 'UNK'}"
-            fam = state.families.get(fam_key) or Family(key=fam_key, husband=father, wife=mother)
+            fam = state.families.get(fam_key)
+            if fam is None:
+                # Attributed once, at creation, from the child's own page —
+                # that's literally where this parent-child link was
+                # discovered (this synthesized family is never built from
+                # `person`'s own `families` list, unlike crawl_full's).
+                fam = Family(
+                    key=fam_key,
+                    husband=father,
+                    wife=mother,
+                    sources=[mapping.geneanet_tree_citation(client.tree, individual.source_url)],
+                )
             if key not in fam.children:
                 fam.children.append(key)
             state.families[fam_key] = fam
@@ -183,7 +210,7 @@ def crawl_full(
         if str(key) in state.visited:
             continue
         person_dict = MessageToDict(client.get_person(index), preserving_proto_field_name=True)
-        individual, families, related = mapping.individual_from_person(person_dict)
+        individual, families, related = mapping.individual_from_person(person_dict, client.tree)
         state.individuals[str(key)] = individual
         state.visited.add(str(key))
         for fam in families:

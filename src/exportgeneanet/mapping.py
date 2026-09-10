@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import html
 import re
+from urllib.parse import quote
 
+from .config import GENEANET_WEB_BASE_URL
 from .identifiers import PersonKey
-from .models import Event, Family, Individual, Media, Note, Place, Witness
+from .models import Event, Family, Individual, Media, Note, Place, SourceCitation, Witness
 
 _SEX_MAP = {"MALE": "M", "FEMALE": "F", "UNKNOWN": "U"}
 
@@ -209,6 +211,33 @@ def _place(name: str | None) -> Place | None:
     return Place(_text(name)) if name else None
 
 
+def person_citation_url(username: str, key: PersonKey) -> str:
+    """A person's canonical `gw.geneanet.org` page URL, built only for use as
+    a GEDCOM source citation (SOURCE_CITATION.PAGE) — this project never
+    fetches it (see CLAUDE.md). Lets a human reading the exported GEDCOM
+    click through to the original Geneanet page."""
+    return f"{GENEANET_WEB_BASE_URL}/{username}?p={quote(key.p)}&n={quote(key.n)}&oc={key.oc}"
+
+
+def geneanet_tree_citation(username: str, page: str | None) -> SourceCitation:
+    """The shared source citation every mapped individual/family/event gets,
+    identifying Geneanet itself (the tree owner and the tree's URL) as
+    where this data was retrieved from — distinct from, and in addition to,
+    any archival citation Geneanet's own data carries (psources/fsources/
+    */_src). `title` is the same for every call with the same `username`, so
+    gedcom_writer.py dedupes all of these into one SOUR record (linked to a
+    "Geneanet" REPO record); `page` is this particular citation's more
+    specific URL."""
+    return SourceCitation(
+        title=(
+            f'Geneanet — online genealogy database, tree owner "{username}" '
+            f"({GENEANET_WEB_BASE_URL}/{username})"
+        ),
+        page=page,
+        is_geneanet_source=True,
+    )
+
+
 def _witnesses_from(raw_witnesses: list[dict]) -> list[Witness]:
     """`WitnessEvent`-shaped dicts (personal event or family `witnesses`
     list) -> `Witness` models. Same privacy rule as everywhere else: a
@@ -229,19 +258,25 @@ def _witnesses_from(raw_witnesses: list[dict]) -> list[Witness]:
 
 
 def individual_from_person(
-    person: dict,
+    person: dict, username: str
 ) -> tuple[Individual, list[Family], set[tuple[PersonKey, int]]]:
     """Map a full `Person` (from `GeneanetApiClient.get_person`) into an
     Individual, the Family records where they're a spouse, and every other
     publicly-visible (PersonKey, index) referenced (parents, spouses,
-    children) — worth the crawler visiting next."""
+    children) — worth the crawler visiting next.
+
+    `username` (the tree being crawled) is used only to attach the
+    Geneanet-attribution source citation everywhere (see
+    `geneanet_tree_citation`) — every other field comes from `person`."""
     key = person_key_from_summary(person)
+    citation_url = person_citation_url(username, key)
     individual = Individual(
         key=key,
         given_name=_text(person.get("firstname", "")),
         surname=_text(person.get("lastname", "")),
         sex=_SEX_MAP.get(person.get("sex", "UNKNOWN"), "U"),
         occupation=_text(person.get("occupation")),
+        source_url=citation_url,
     )
     if person.get("image"):
         individual.media.append(Media(url=person["image"]))
@@ -263,6 +298,10 @@ def individual_from_person(
         if element.get("reason"):
             note_parts.append(f"Reason: {_html_to_text(element['reason'])}")
 
+        event_sources = [geneanet_tree_citation(username, citation_url)]
+        if element.get("src"):
+            event_sources.append(SourceCitation(title=_html_to_text(element["src"])))
+
         individual.events.append(
             Event(
                 tag=gedcom_tag,
@@ -272,7 +311,7 @@ def individual_from_person(
                 # Only the generic fallback tag needs a TYPE to say what it
                 # actually is; BIRT/DEAT/etc already say that via the tag.
                 type=_text(element.get("name")) if gedcom_tag == "EVEN" else None,
-                source=_html_to_text(element["src"]) if element.get("src") else None,
+                sources=event_sources,
                 witnesses=_witnesses_from(element.get("witnesses", [])),
             )
         )
@@ -280,8 +319,9 @@ def individual_from_person(
     if person.get("notes"):
         individual.notes.append(Note(_html_to_text(person["notes"])))
 
+    individual.sources.append(geneanet_tree_citation(username, citation_url))
     if person.get("psources"):
-        individual.sources.append(_html_to_text(person["psources"]))
+        individual.sources.append(SourceCitation(title=_html_to_text(person["psources"])))
 
     related: set[tuple[PersonKey, int]] = set()
 
@@ -319,6 +359,9 @@ def individual_from_person(
         if fam.get("marriage_date") or fam.get("marriage_place"):
             marriage_type = fam.get("marriage_type", "MARRIED")
             marriage_tag = MARRIAGE_TYPE_TAG_MAP.get(marriage_type, "EVEN")
+            marriage_sources = [geneanet_tree_citation(username, citation_url)]
+            if fam.get("marriage_src"):
+                marriage_sources.append(SourceCitation(title=_html_to_text(fam["marriage_src"])))
             marriage = Event(
                 tag=marriage_tag,
                 date=gedcom_date(
@@ -326,7 +369,7 @@ def individual_from_person(
                 ),
                 place=_place(fam.get("marriage_place")),
                 type=_label_from_enum(marriage_type) if marriage_tag == "EVEN" else None,
-                source=_html_to_text(fam["marriage_src"]) if fam.get("marriage_src") else None,
+                sources=marriage_sources,
                 witnesses=_witnesses_from(fam.get("witnesses", [])),
             )
 
@@ -340,9 +383,13 @@ def individual_from_person(
                     fam.get("divorce_date_raw"), fam.get("divorce_date_cal"), fam.get("divorce_date")
                 ),
                 type=_label_from_enum(divorce_type) if divorce_tag == "EVEN" else None,
+                sources=[geneanet_tree_citation(username, citation_url)],
             )
 
         fam_key = f"{husband or 'UNK'}__{wife or 'UNK'}"
+        fam_sources = [geneanet_tree_citation(username, citation_url)]
+        if fam.get("fsources"):
+            fam_sources.append(SourceCitation(title=_html_to_text(fam["fsources"])))
         families.append(
             Family(
                 key=fam_key,
@@ -352,7 +399,7 @@ def individual_from_person(
                 marriage=marriage,
                 divorce=divorce,
                 notes=[Note(_html_to_text(fam["notes"]))] if fam.get("notes") else [],
-                sources=[_html_to_text(fam["fsources"])] if fam.get("fsources") else [],
+                sources=fam_sources,
             )
         )
         individual.family_keys.append(fam_key)

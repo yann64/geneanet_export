@@ -13,6 +13,15 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 )
 
+# Base for citation URLs pointing at a person's page on gw.geneanet.org —
+# built for GEDCOM SOUR/PAGE references only. This project never fetches
+# these URLs itself (see CLAUDE.md "Critical constraint: how data is
+# fetched"); they exist purely so a human reading the exported GEDCOM can
+# click through to the source page.
+GENEANET_WEB_BASE_URL = "https://gw.geneanet.org"
+GENEANET_REPOSITORY_NAME = "Geneanet"
+GENEANET_REPOSITORY_WWW = "https://www.geneanet.org/"
+
 # Sequential requests only; a random delay in this range is applied before every
 # API call so as not to burden Geneanet's servers.
 DEFAULT_MIN_DELAY_SECONDS = 4.0

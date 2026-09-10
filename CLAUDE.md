@@ -115,12 +115,32 @@ Everything lives in `src/exportgeneanet/`:
   `"Prud&#39;Homie"`) — apply one of these to any new string field pulled
   from an API response.
 
-  Source citations (Geneanet's `src`/`psources`/`fsources`/`marriage_src`,
-  all free text — there's no separate repository/archive structure in the
-  API, so this project doesn't fabricate GEDCOM `REPO` records) are carried
-  as plain strings on `Event.source`/`Individual.sources`/`Family.sources`;
-  `gedcom_writer.py` is what dedupes them into `SOUR` records. Event
-  witnesses (`WitnessEvent`: type + a `SimplePerson` + a note) become
+  Source citations are `SourceCitation(title, page, is_geneanet_source)` on
+  `Event.sources`/`Individual.sources`/`Family.sources` (each a *list* —
+  every fact carries the Geneanet-attribution citation described just below
+  in addition to whatever archival citation it has); `gedcom_writer.py`
+  dedupes them into `SOUR` records keyed by `title`, so the same archival
+  record cited on several facts becomes one record referenced by pointer.
+  Geneanet's own archival citation text (`src`/`psources`/`fsources`/
+  `marriage_src`, all free text — there's no separate repository/archive
+  structure for these in the API) is wrapped as a plain
+  `SourceCitation(title=...)`, `is_geneanet_source` left `False`.
+
+  Every mapped individual/family/event also gets a *second*, shared
+  citation from `geneanet_tree_citation(username, page)`: `title` is the
+  same string for every call with the same tree (so it dedupes to one SOUR
+  record naming the tree owner and the tree's base URL), `page` is that
+  particular citation's own `person_citation_url(username, key)` — a
+  `gw.geneanet.org` URL built for citation purposes only, **never
+  fetched** by this project (see "Critical constraint" above — constructing
+  a reference URL a human could click is not the same thing as scraping it).
+  `is_geneanet_source=True` on this one citation is what tells
+  `gedcom_writer.py` to link its `SOUR` record to the "Geneanet" `REPO`
+  record it emits. `crawl_ascendants`'s synthesized families (not produced
+  by `individual_from_person`) attach this themselves, once per family at
+  creation, using the discovering child's own `source_url`.
+
+  Event witnesses (`WitnessEvent`: type + a `SimplePerson` + a note) become
   `Witness` objects on `Event.witnesses`, privacy-checked like any other
   person reference — `gedcom_writer.py` only emits an `ASSO` pointer for a
   witness that's actually present in the export, never a fabricated `INDI`.
@@ -152,12 +172,15 @@ Everything lives in `src/exportgeneanet/`:
 - **`gedcom_writer.py`** — pure function `generate_gedcom(individuals, families, ...)
   -> str`. Computes `FAMC` (family-as-child) by inverting `Family.children`
   lists, since `Individual` only stores `father`/`mother` keys directly.
-  `_collect_source_ids` does a first pass over every `Event.source`/
-  `Individual.sources`/`Family.sources` to dedupe identical citation text
-  into one `@S<n>@` record referenced by pointer — the same archival record
-  is often cited on several facts. `include_notes=False` suppresses event
-  notes and witness notes too, not just top-level `Individual`/`Family`
-  notes — keep that consistent if adding another note-bearing field.
+  `_collect_source_ids` does a first pass over every `Event.sources`/
+  `Individual.sources`/`Family.sources` to dedupe citations sharing a
+  `title` into one `@S<n>@` record referenced by pointer, and separately
+  tracks which titles are the Geneanet-attribution citation
+  (`is_geneanet_source`) — those, and only those, get a `1 REPO @R1@` link;
+  a single `@R1@ REPO` "Geneanet" record is emitted once if any citation
+  needs it. `include_notes=False` suppresses event notes and witness notes
+  too, not just top-level `Individual`/`Family` notes — keep that
+  consistent if adding another note-bearing field.
 - **`cli.py`** — Typer app wiring `list` / `export`. `--individual` is
   required for both (no default-person fallback exists over the API).
 

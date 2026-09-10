@@ -1,10 +1,18 @@
 from exportgeneanet.identifiers import PersonKey
 from exportgeneanet.mapping import (
     gedcom_date,
+    geneanet_tree_citation,
     individual_from_person,
     is_publicly_visible,
+    person_citation_url,
     person_ref_from_graph_node,
 )
+
+USERNAME = "yann64"
+
+
+def _titles(citations):
+    return [c.title for c in citations]
 
 
 def _simple_person(**overrides):
@@ -85,7 +93,7 @@ def test_individual_from_person_maps_events_and_relations():
         ],
     }
 
-    individual, families, related = individual_from_person(person)
+    individual, families, related = individual_from_person(person, USERNAME)
 
     assert individual.key == PersonKey(p="etienne", n="barbel", oc=0)
     assert individual.given_name == "Étienne"
@@ -95,6 +103,7 @@ def test_individual_from_person_maps_events_and_relations():
     assert individual.notes[0].text == "Some notes with 'entity'\nsecond line"
     assert individual.father == PersonKey(p="guillaume", n="barbel", oc=0)
     assert individual.mother == PersonKey(p="marguerite", n="guiraud", oc=0)
+    assert individual.source_url == person_citation_url(USERNAME, individual.key)
 
     assert len(families) == 1
     fam = families[0]
@@ -121,7 +130,7 @@ def test_individual_from_person_excludes_hidden_parent():
         "occ": 0,
         "father": _simple_person(index=2, name_is_hidden=True),
     }
-    individual, _families, related = individual_from_person(person)
+    individual, _families, related = individual_from_person(person, USERNAME)
     assert individual.father is None
     assert related == set()
 
@@ -197,7 +206,7 @@ def test_individual_from_person_sets_type_on_generic_events_only():
             ]
         },
     }
-    individual, _families, _related = individual_from_person(person)
+    individual, _families, _related = individual_from_person(person, USERNAME)
     birth, custom = individual.events
     assert birth.tag == "BIRT"
     assert birth.type is None
@@ -221,8 +230,10 @@ def _base_person(**overrides):
 
 def test_individual_from_person_maps_psources():
     person = _base_person(psources="Some &#39;archival&#39; reference")
-    individual, _families, _related = individual_from_person(person)
-    assert individual.sources == ["Some 'archival' reference"]
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    assert "Some 'archival' reference" in _titles(individual.sources)
+    # Every individual also gets the shared Geneanet-tree attribution.
+    assert any(c.is_geneanet_source for c in individual.sources)
 
 
 def test_individual_from_person_event_source_and_reason():
@@ -239,9 +250,10 @@ def test_individual_from_person_event_source_and_reason():
             ]
         }
     )
-    individual, _families, _related = individual_from_person(person)
+    individual, _families, _related = individual_from_person(person, USERNAME)
     (birth,) = individual.events
-    assert birth.source == "Registre des naissances, acte 12"
+    assert "Registre des naissances, acte 12" in _titles(birth.sources)
+    assert any(c.is_geneanet_source for c in birth.sources)
     assert birth.note.text == "Reason: Because reasons"
 
 
@@ -262,7 +274,7 @@ def test_individual_from_person_event_witnesses_filters_privacy():
             ]
         }
     )
-    individual, _families, _related = individual_from_person(person)
+    individual, _families, _related = individual_from_person(person, USERNAME)
     (birth,) = individual.events
     assert len(birth.witnesses) == 1
     witness = birth.witnesses[0]
@@ -281,10 +293,11 @@ def test_individual_from_person_family_notes_and_sources():
             }
         ]
     )
-    individual, families, _related = individual_from_person(person)
+    individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert fam.notes[0].text == "Some family note"
-    assert fam.sources == ["Family source citation"]
+    assert "Family source citation" in _titles(fam.sources)
+    assert any(c.is_geneanet_source for c in fam.sources)
     assert fam.key in individual.family_keys
 
 
@@ -298,9 +311,10 @@ def test_individual_from_person_marriage_src_attaches_to_marriage_event():
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
-    assert fam.marriage.source == "Marriage register citation"
+    assert "Marriage register citation" in _titles(fam.marriage.sources)
+    assert any(c.is_geneanet_source for c in fam.marriage.sources)
 
 
 def test_individual_from_person_marriage_type_engaged_maps_to_enga():
@@ -313,7 +327,7 @@ def test_individual_from_person_marriage_type_engaged_maps_to_enga():
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert fam.marriage.tag == "ENGA"
     assert fam.marriage.type is None
@@ -329,7 +343,7 @@ def test_individual_from_person_marriage_type_no_mention_falls_back_to_generic_e
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert fam.marriage.tag == "EVEN"
     assert fam.marriage.type == "No mention"
@@ -345,7 +359,7 @@ def test_individual_from_person_divorce_event_mapped_to_div():
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert fam.divorce.tag == "DIV"
 
@@ -359,7 +373,7 @@ def test_individual_from_person_no_divorce_event_when_not_divorced():
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert fam.divorce is None
 
@@ -375,7 +389,44 @@ def test_individual_from_person_family_witnesses_on_marriage():
             }
         ]
     )
-    _individual, families, _related = individual_from_person(person)
+    _individual, families, _related = individual_from_person(person, USERNAME)
     (fam,) = families
     assert len(fam.marriage.witnesses) == 1
     assert fam.marriage.witnesses[0].role == "Civil officer"
+
+
+def test_person_citation_url_builds_gw_geneanet_url():
+    key = PersonKey(p="jean", n="dupont", oc=2)
+    assert person_citation_url("yann64", key) == "https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=2"
+
+
+def test_geneanet_tree_citation_is_flagged_and_shares_title_across_pages():
+    citation1 = geneanet_tree_citation(USERNAME, "https://gw.geneanet.org/yann64?p=jean&n=dupont&oc=0")
+    citation2 = geneanet_tree_citation(USERNAME, "https://gw.geneanet.org/yann64?p=marie&n=martin&oc=0")
+    assert citation1.is_geneanet_source
+    assert citation1.title == citation2.title  # same tree -> dedupes to one SOUR record
+    assert citation1.page != citation2.page  # but each citation keeps its own PAGE
+    assert USERNAME in citation1.title
+
+
+def test_individual_from_person_divorce_event_gets_geneanet_source():
+    person = _base_person(
+        families=[
+            {
+                "spouse": _simple_person(index=2, p="marie", n="martin", sex="FEMALE"),
+                "divorce_type": "DIVORCED",
+                "divorce_date": "1960",
+            }
+        ]
+    )
+    _individual, families, _related = individual_from_person(person, USERNAME)
+    (fam,) = families
+    assert any(c.is_geneanet_source for c in fam.divorce.sources)
+
+
+def test_individual_from_person_event_without_src_still_gets_geneanet_source():
+    person = _base_person(events={"elements": [{"type": "EPERS_BIRTH", "name": "birth", "date": "1950"}]})
+    individual, _families, _related = individual_from_person(person, USERNAME)
+    (birth,) = individual.events
+    assert len(birth.sources) == 1
+    assert birth.sources[0].is_geneanet_source

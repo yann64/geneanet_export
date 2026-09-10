@@ -41,6 +41,27 @@ class Witness:
 
 
 @dataclass
+class SourceCitation:
+    """A GEDCOM SOURCE_CITATION. `title` identifies which shared SOUR record
+    this belongs to — gedcom_writer.py dedupes citations with equal `title`
+    into one record, so the same archival act cited on several facts (or the
+    same Geneanet-tree attribution cited on every fact) becomes one SOUR
+    referenced by pointer rather than repeated free text. `page` is that
+    citation's own SOURCE_CITATION.PAGE (e.g. a specific person's URL) and
+    varies per instance even when `title` is shared."""
+
+    title: str
+    page: str | None = None
+    # True only for the Geneanet-tree-attribution citation every mapped
+    # fact gets (see mapping.geneanet_tree_citation) — tells gedcom_writer.py
+    # to link that SOUR record to the "Geneanet" REPO record. Never set for
+    # Geneanet's own archival-source text (psources/fsources/*_src): those
+    # are sourced from the underlying civil/church archive, not from
+    # Geneanet-as-a-repository.
+    is_geneanet_source: bool = False
+
+
+@dataclass
 class Event:
     """A GEDCOM-style event: tag is e.g. "BIRT", "DEAT", "MARR", "OCCU"."""
 
@@ -52,9 +73,7 @@ class Event:
     # for events mapped to the generic GEDCOM "EVEN" tag — GEDCOM expects EVEN
     # to carry a TYPE describing what kind of event it actually is.
     type: str | None = None
-    # Source citation text for this specific fact (Geneanet's per-event `src`).
-    # Deduplicated into GEDCOM SOUR records by gedcom_writer.py.
-    source: str | None = None
+    sources: list[SourceCitation] = field(default_factory=list)
     witnesses: list[Witness] = field(default_factory=list)
 
 
@@ -71,9 +90,11 @@ class Individual:
     father: PersonKey | None = None
     mother: PersonKey | None = None
     family_keys: list[str] = field(default_factory=list)  # families where this person is a spouse
+    # This person's own Geneanet page URL — citation-only (see
+    # mapping.person_citation_url), this project never fetches it.
     source_url: str | None = None
     # General (not fact-specific) source citations, e.g. Geneanet's `psources`.
-    sources: list[str] = field(default_factory=list)
+    sources: list[SourceCitation] = field(default_factory=list)
 
     @property
     def gedcom_id(self) -> str:
@@ -90,7 +111,7 @@ class Family:
     divorce: Event | None = None
     notes: list[Note] = field(default_factory=list)
     # General (not fact-specific) source citations, e.g. Geneanet's `fsources`.
-    sources: list[str] = field(default_factory=list)
+    sources: list[SourceCitation] = field(default_factory=list)
 
     @property
     def gedcom_id(self) -> str:

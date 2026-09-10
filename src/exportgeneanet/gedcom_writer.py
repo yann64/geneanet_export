@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import Event, Family, Individual, Note
+from .config import GENEANET_REPOSITORY_NAME, GENEANET_REPOSITORY_WWW
+from .models import Event, Family, Individual, Note, SourceCitation
 
 _MAX_LINE_CHARS = 200  # conservative CONC threshold; GEDCOM 5.5.1 caps at 255
+_GENEANET_REPOSITORY_ID = "R1"
 
 
 class GedcomLines:
@@ -41,38 +43,45 @@ class GedcomLines:
         return "\n".join(self._lines) + "\n"
 
 
-def _collect_source_ids(individuals: dict[str, Individual], families: dict[str, Family]) -> dict[str, str]:
-    """Assign a stable `@S<n>@` id to every distinct source citation text
+def _collect_source_ids(
+    individuals: dict[str, Individual], families: dict[str, Family]
+) -> tuple[dict[str, str], set[str]]:
+    """Assign a stable `@S<n>@` id to every distinct source citation *title*
     found anywhere (events, and Individual/Family general sources), so
-    repeated citations (the same archival record cited for several facts)
-    become one SOUR record referenced by pointer rather than duplicated
-    free text.
+    repeated citations (the same archival record cited for several facts, or
+    the shared Geneanet-tree attribution every fact carries) become one SOUR
+    record referenced by pointer rather than duplicated free text.
 
-    Geneanet only ever gives loose citation text, never a separate
-    repository/archive breakdown, so this project doesn't fabricate GEDCOM
-    REPO records — there's no real repository data to attach them to.
+    Also returns the subset of titles that are the Geneanet-tree attribution
+    (`SourceCitation.is_geneanet_source`) — only those get linked to the
+    "Geneanet" REPO record; Geneanet's own archival citation text
+    (psources/fsources/*_src) is sourced from the underlying civil/church
+    archive, not from Geneanet-as-a-repository, so this project never
+    fabricates a REPO record for those.
     """
     source_ids: dict[str, str] = {}
+    geneanet_titles: set[str] = set()
 
-    def register(text: str | None) -> None:
-        if text and text not in source_ids:
-            source_ids[text] = f"S{len(source_ids) + 1}"
+    def register(citations: list[SourceCitation]) -> None:
+        for citation in citations:
+            if citation.title not in source_ids:
+                source_ids[citation.title] = f"S{len(source_ids) + 1}"
+            if citation.is_geneanet_source:
+                geneanet_titles.add(citation.title)
 
     for individual in individuals.values():
-        for text in individual.sources:
-            register(text)
+        register(individual.sources)
         for event in individual.events:
-            register(event.source)
+            register(event.sources)
 
     for family in families.values():
-        for text in family.sources:
-            register(text)
+        register(family.sources)
         if family.marriage:
-            register(family.marriage.source)
+            register(family.marriage.sources)
         if family.divorce:
-            register(family.divorce.source)
+            register(family.divorce.sources)
 
-    return source_ids
+    return source_ids, geneanet_titles
 
 
 def _write_event(
@@ -92,8 +101,7 @@ def _write_event(
         g.add(level + 1, "PLAC", event.place.name)
     if event.note and include_notes:
         g.add_text(level + 1, "NOTE", event.note.text)
-    if event.source and event.source in source_ids:
-        g.add(level + 1, "SOUR", f"@{source_ids[event.source]}@")
+    _write_sources(g, level + 1, event.sources, source_ids)
     for witness in event.witnesses:
         # Only link a witness who is actually part of this export — never
         # fabricate an INDI record just because someone was mentioned as a
@@ -114,11 +122,16 @@ def _write_notes(g: GedcomLines, level: int, notes: list[Note]) -> None:
         g.add_text(level, "NOTE", note.text)
 
 
-def _write_sources(g: GedcomLines, level: int, sources: list[str], source_ids: dict[str, str]) -> None:
-    for text in sources:
-        source_id = source_ids.get(text)
-        if source_id:
-            g.add(level, "SOUR", f"@{source_id}@")
+def _write_sources(
+    g: GedcomLines, level: int, citations: list[SourceCitation], source_ids: dict[str, str]
+) -> None:
+    for citation in citations:
+        source_id = source_ids.get(citation.title)
+        if not source_id:
+            continue
+        g.add(level, "SOUR", f"@{source_id}@")
+        if citation.page:
+            g.add(level + 1, "PAGE", citation.page)
 
 
 def generate_gedcom(
@@ -136,7 +149,7 @@ def generate_gedcom(
     g.add(2, "FORM", "LINEAGE-LINKED")
     g.add(1, "CHAR", "UTF-8")
 
-    source_ids = _collect_source_ids(individuals, families)
+    source_ids, geneanet_titles = _collect_source_ids(individuals, families)
 
     # FAMC (family where the individual is a child) is derived from the
     # families' child lists, since Individual only stores father/mother keys.
@@ -196,9 +209,16 @@ def generate_gedcom(
             _write_notes(g, 1, fam.notes)
         _write_sources(g, 1, fam.sources, source_ids)
 
-    for text, source_id in source_ids.items():
+    if geneanet_titles:
+        g.add(0, f"@{_GENEANET_REPOSITORY_ID}@", "REPO")
+        g.add(1, "NAME", GENEANET_REPOSITORY_NAME)
+        g.add(1, "WWW", GENEANET_REPOSITORY_WWW)
+
+    for title, source_id in source_ids.items():
         g.add(0, f"@{source_id}@", "SOUR")
-        g.add_text(1, "TITL", text)
+        g.add_text(1, "TITL", title)
+        if title in geneanet_titles:
+            g.add(1, "REPO", f"@{_GENEANET_REPOSITORY_ID}@")
 
     g.add(0, "TRLR")
     return g.render()
