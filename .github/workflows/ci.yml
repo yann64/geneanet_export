@@ -30,6 +30,9 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Install system libraries PySide6 needs even just to import
+        run: sudo apt-get update && sudo apt-get install -y libegl1
+
       - name: Install package (with dev and gui extras)
         run: pip install -e ".[dev,gui]"
 
