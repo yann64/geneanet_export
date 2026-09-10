@@ -280,27 +280,43 @@ Everything lives in `src/exportgeneanet/`:
   PyInstaller at `gui/app.py` itself.
 
   Builds from `packaging/exportgeneanet-gui.spec`, not plain CLI flags —
-  it excludes `libglib-2.0`/`libgio-2.0`/`libgobject-2.0`/`libgmodule-2.0`/
-  `libgthread-2.0` from the bundle. Confirmed root cause of a real
-  segfault report (v0.1.0, reproduced in this sandbox under a real X11
-  display, not just `QT_QPA_PLATFORM=offscreen` — offscreen never
-  triggers this): the PySide6 wheel vendors its own (older) glib, which a
-  onefile build's extraction dir puts first on the library search path;
-  when anything later `dlopen()`s a *system* GIO module (confirmed real:
-  GVFS's D-Bus module, loaded simply by running a real desktop session),
-  that module resolves symbols against the bundled older glib instead of
-  the system one it was built against — here, a missing
-  `g_variant_builder_init_static` (added in GLib 2.70). glib guarantees
-  strict ABI backward compatibility and is a near-universal base
-  dependency on Linux desktops, so excluding the bundled copy and
-  falling back to the system's own is safe (and is what a normal,
-  non-frozen Qt app already does). If touching the PyInstaller build
-  config, keep this exclusion — verify by extracting the onefile archive
-  (run it, then check `/tmp/_MEI*` while it's alive — clean up any stale
-  `_MEI*` dirs from a previous killed run first, since onefile skips its
-  exit cleanup on a hard kill and a stale dir will shadow the fresh one
-  in a naive `ls -d /tmp/_MEI* | head -1`) and confirming those libraries
-  are absent.
+  it excludes a whole category of bundled shared libraries: glib/gio/
+  gobject/gmodule/gthread, X11/xcb client libraries, xkbcommon, D-Bus, and
+  fontconfig. These aren't ordinary app libraries — they're the client
+  side of a live protocol (X11, XKB keymaps, D-Bus) or a plugin-loading
+  system (GIO) that must match whatever the *running* desktop provides,
+  not the build machine, and PyInstaller's Linux dependency walker bundles
+  copies from the build machine anyway; a onefile build's extraction dir
+  being first on the library search path means the mismatched bundled
+  copy wins even though the target system already has its own. Confirmed
+  root cause of two real segfault reports on real user machines, neither
+  ever caught by this project's earlier offscreen-only testing
+  (`QT_QPA_PLATFORM=offscreen` never touches GIO modules or a real X
+  server) and both reproduced in this sandbox only after switching to a
+  real X11 display:
+  - v0.1.0: bundled (older) glib missing `g_variant_builder_init_static`
+    (added in GLib 2.70) crashed loading the system's GVFS D-Bus GIO
+    module.
+  - v0.1.1 (after excluding glib alone): bundled libxkbcommon segfaulted
+    parsing the running X server's own keymap data (`dmesg`: "segfault
+    ... in libxkbcommon.so.0" — `dmesg` was the only lead; the crash
+    printed no error text and gdb's default `run` only caught a
+    downstream re-raise inside the bootloader's own signal handler, not
+    the original fault).
+  All of these are near-universal base dependencies of any Linux desktop
+  capable of running a GUI app at all, so falling back to the system's
+  own copies (what a normal, non-frozen Qt app already does) is safe —
+  `libGL.so`/`libEGL.so` (GPU-driver-tied, the same risk again) aren't in
+  the exclusion list because PyInstaller already excludes those by
+  default. If touching the PyInstaller build config, keep this exclusion
+  broad rather than narrowing it back to just the libraries a specific
+  crash report named — verify by extracting the onefile archive (run it,
+  then check `/tmp/_MEI*` while it's alive — clean up any stale `_MEI*`
+  dirs from a previous killed run first, since onefile skips its exit
+  cleanup on a hard kill and a stale dir will shadow the fresh one in a
+  naive `ls -d /tmp/_MEI* | head -1`) and confirming those libraries are
+  absent, then actually run it under a real display (not just offscreen)
+  before considering a packaging change verified.
 
 ### Data flow for `export`
 
